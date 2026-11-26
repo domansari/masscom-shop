@@ -93,3 +93,17 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
   color:#fff;background:#16a34a;border-color:#86efac;font-weight:700
 }
 .action-pay:hover{background:#15803d;border-color:#bbf7d0}
+
+
+.action-add-tenant{
+  color:#fff;background:#7c3aed;border-color:#c4b5fd;font-weight:600
+}
+.action-add-tenant:hover{background:#6d28d9;border-color:#ddd6fe}
+.action-import{
+  color:#fff;background:#ea580c;border-color:#fdba74;font-weight:600
+}
+.action-import:hover{background:#c2410c;border-color:#fed7aa}
+.action-template{
+  color:#042f2e;background:#2dd4bf;border-color:#99f6e4;font-weight:600
+}
+.action-template:hover{color:#042f2e;background:#5eead4;border-color:#ccfbf1}
