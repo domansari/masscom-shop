@@ -450,18 +450,27 @@ root.addEventListener('click',event=>{
   if (name==='edit-allocation') {
     const allocations = ledger.leases.filter(l=>l.tenant_id===id && !l.end_month);
     if (!allocations.length) return;
-    dialog('आवंटन संशोधित करें','<label>आवंटित दुकान<select name="id" required>'+
+    dialog('आवंटन संशोधित करें','<label>किरायेदारी चुनें<select name="id" required>'+
       allocations.map(l=>'<option value="'+escape(l.id)+'">'+escape(shopLabel(shop(l.shop_id)))+'</option>').join('')+
       '</select></label>'+
+      '<label>आवंटित दुकान बदलें<select name="shop_id" required></select></label>'+
       '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" required></label>'+
       '<label>सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" required></label>',
-      'edit-allocation',d=>({id:d.id,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+      'edit-allocation',d=>({id:d.id,shop_id:d.shop_id,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
     const form = modal.querySelector('form');
     const picker = form.elements.namedItem('id');
+    const shopPicker = form.elements.namedItem('shop_id');
     const populate = ()=>{
       const allocation = lease(picker.value);
       for (const field of ['rent','opening','deposit']) form.elements.namedItem(field).value=allocation[field]/100;
+      const availableShops = ledger.shops.filter(s=>!ledger.leases.some(other=>
+        other.id!==allocation.id && other.shop_id===s.id &&
+        (!other.end_month || other.end_month>=allocation.start_month)));
+      shopPicker.innerHTML=availableShops.map(s=>
+        '<option value="'+escape(s.id)+'">'+escape(shopLabel(s))+'</option>'
+      ).join('');
+      shopPicker.value=allocation.shop_id;
     };
     picker.addEventListener('change',populate);
     populate();
