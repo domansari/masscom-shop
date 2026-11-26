@@ -45,6 +45,8 @@ const table = (headers,rows) => rows.length ? '<div class="table"><table><thead>
   '<p>अभी कोई रिकॉर्ड नहीं है।</p>';
 let ledger, month, clock;
 let tenantTab = 'tenants';
+let tenantDueMonth = '';
+let tenantDueRows = [];
 let marketFilter = '';
 let tenantListMarket = '';
 let rentTenantMarket = '';
@@ -98,6 +100,40 @@ function openingRows() {
     const paid = totals.get(l.id)||0;
     return {l,paid,balance:l.opening-paid};
   });
+}
+function tenantOutstandingData(asOf) {
+  const paidByPeriod = new Map();
+  for (const p of ledger.payments) {
+    const key = p.lease_id+'|'+p.month;
+    paidByPeriod.set(key,(paidByPeriod.get(key)||0)+p.amount);
+  }
+  const openingDue = new Map(openingRows().map(({l,balance})=>[l.id,Math.max(0,balance)]));
+  const groups = new Map();
+  for (const l of ledger.leases) {
+    if (l.start_month>asOf) continue;
+    const last = l.end_month && l.end_month<asOf ? l.end_month : asOf;
+    let total = openingDue.get(l.id)||0;
+    const date = new Date(l.start_month+'-01T00:00:00Z');
+    for (let period=l.start_month;period<=last;period=date.toISOString().slice(0,7)) {
+      total += Math.max(0,l.rent-(paidByPeriod.get(l.id+'|'+period)||0));
+      date.setUTCMonth(date.getUTCMonth()+1);
+    }
+    if (total<=0) continue;
+    const tenant = tenantFor(l);
+    const leasedShop = shop(l.shop_id);
+    if (!groups.has(l.tenant_id)) groups.set(l.tenant_id,{
+      id:l.tenant_id,name:tenant?.name||l.tenant||'—',phone:tenant?.phone||l.phone||'',
+      shops:[],total:0
+    });
+    const group = groups.get(l.tenant_id);
+    group.shops.push({
+      market:marketOf(leasedShop)?.name||'बिना मार्केट',
+      shop:leasedShop?shopNumber(leasedShop):'—',
+      amount:total
+    });
+    group.total += total;
+  }
+  return [...groups.values()].sort((a,b)=>a.name.localeCompare(b.name,'hi'));
 }
 function receiptRows() {
   const groups = new Map();
@@ -236,6 +272,35 @@ function render(error = '') {
       if (!assignedMarkets.has(l.tenant_id)) assignedMarkets.set(l.tenant_id,new Set());
       assignedMarkets.get(l.tenant_id).add(shop(l.shop_id).market_id || 'unassigned');
     }
+    const dueMonths = new Set([current]);
+    for (const l of ledger.leases) {
+      const last = l.end_month && l.end_month<current ? l.end_month : current;
+      const date = new Date(l.start_month+'-01T00:00:00Z');
+      for (let key=l.start_month;key<=last;key=date.toISOString().slice(0,7)) {
+        dueMonths.add(key);
+        date.setUTCMonth(date.getUTCMonth()+1);
+      }
+    }
+    if (!dueMonths.has(tenantDueMonth)) tenantDueMonth=current;
+    const dueMonthOptions = [...dueMonths].sort().reverse().map(key=>
+      '<option value="'+escape(key)+'"'+(key===tenantDueMonth?' selected':'')+'>'+showMonth(key)+'</option>'
+    ).join('');
+    const dueMonthPicker = '<label>बकाया स्थिति माह<select data-tenant-due-month>'+dueMonthOptions+'</select></label>';
+    tenantDueRows = tenantOutstandingData(tenantDueMonth);
+    const tenantDueTable = () => table(['क्र.','किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया'],tenantDueRows.map((row,index)=>[
+      String(index+1),escape(row.name),escape(formatMobile(row.phone)||'—'),
+      row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
+      money(row.total)
+    ]));
+    const defaultersContent = toolbar('बकायेदार',dueMonthPicker+action('print-defaulters','','A4 PDF प्रिंट / डाउनलोड करें','print'))+
+      '<p>चुने गए माह तक जिन किरायेदारों का किराया बाकी है, उनकी सूची।</p>'+tenantDueTable();
+    const messageContent = toolbar('संदेश भेजें',dueMonthPicker)+
+      '<p role="status">WhatsApp API और संदेश टेम्पलेट सेटअप लंबित है। भेजने का बटन सेटअप पूरा होने के बाद चालू होगा।</p>'+
+      table(['किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया','संदेश'],tenantDueRows.map(row=>[
+        escape(row.name),escape(formatMobile(row.phone)||'—'),
+        row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
+        money(row.total),'<button type="button" class="action-message" disabled title="WhatsApp API और संदेश टेम्पलेट लंबित हैं">संदेश भेजें</button>'
+      ]));
     const visibleTenants = ledger.tenants.filter(t=>!tenantListMarket ||
       (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
@@ -265,9 +330,13 @@ function render(error = '') {
     ]));
     body = '<nav class="tenant-tabs" aria-label="किरायेदार पेज">'+
       '<button type="button" class="tenant-tab" data-tenant-tab="tenants" aria-pressed="'+(tenantTab==='tenants')+'">किरायेदार</button>'+
+      '<button type="button" class="tenant-tab" data-tenant-tab="defaulters" aria-pressed="'+(tenantTab==='defaulters')+'">बकायेदार</button>'+
+      '<button type="button" class="tenant-tab" data-tenant-tab="messages" aria-pressed="'+(tenantTab==='messages')+'">संदेश भेजें</button>'+
       '<button type="button" class="tenant-tab" data-tenant-tab="leases" aria-pressed="'+(tenantTab==='leases')+'">किरायेदारी का रिकॉर्ड</button>'+
       '</nav>'+
       '<section class="tenant-tab-panel"'+(tenantTab==='tenants'?'':' hidden')+'>'+tenantListContent+'</section>'+
+      '<section class="tenant-tab-panel"'+(tenantTab==='defaulters'?'':' hidden')+'>'+defaultersContent+'</section>'+
+      '<section class="tenant-tab-panel"'+(tenantTab==='messages'?'':' hidden')+'>'+messageContent+'</section>'+
       '<section class="tenant-tab-panel"'+(tenantTab==='leases'?'':' hidden')+'>'+tenancyRecordContent+'</section>';
   } else if (route === 'rent') {
     const inRentMarket = l => !rentTenantMarket ||
@@ -379,6 +448,12 @@ function render(error = '') {
     event.preventDefault();
     openTenantPayment('tenant-payment',new FormData(event.currentTarget).get('tenant_id'));
   });
+  document.querySelectorAll('[data-tenant-due-month]').forEach(select=>select.addEventListener('change',event=>{
+    if (!event.target.value) return;
+    tenantDueMonth=event.target.value;
+    render();
+    document.querySelector('[data-tenant-due-month]')?.focus();
+  }));
   document.querySelector('#tenant-list-market')?.addEventListener('change',event=>{
     tenantListMarket=event.target.value;
     render();
@@ -564,6 +639,21 @@ root.addEventListener('click',event=>{
       '" value="'+ledger.today.slice(0,7)+'" required></label>'+passwordField,'end-lease',d=>({...d,id}),'किरायेदारी समाप्त करें');
   }
   if (['payment','opening-payment','tenant-payment'].includes(name)) openTenantPayment(name,id);
+  if (name==='print-defaulters') {
+    const compactClass=tenantDueRows.length>80?'due-report-extra-compact':tenantDueRows.length>35?'due-report-compact':'';
+    const rows=tenantDueRows.map((row,index)=>[
+      String(index+1),escape(row.name),escape(formatMobile(row.phone)||'—'),
+      row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
+      money(row.total)
+    ]);
+    const total=tenantDueRows.reduce((sum,row)=>sum+row.total,0);
+    document.querySelector('#print').innerHTML='<article class="due-report '+compactClass+'">'+
+      '<h1>किराया बकाया सूची</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p>'+
+      '<p>बकाया स्थिति माह · '+showMonth(tenantDueMonth)+' · प्रिंट तारीख · '+showDate(ledger.today)+'</p>'+
+      table(['क्र.','किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया'],rows)+
+      '<h2>सभी किरायेदारों का कुल बकाया · '+money(total)+'</h2></article>';
+    window.print();
+  }
   if (name==='print-deposit') {
     const l=lease(id);
     if (!l || !l.deposit_receipt_number || l.deposit<=0) return;
