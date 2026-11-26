@@ -203,7 +203,7 @@ function render(error = '') {
       const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
       const shops = new Set(allocations.map(l=>l.shop_id));
       const currentLease = allocations.find(isOccupied) || allocations[0];
-      const pay = shops.size>1 ? action('tenant-payment',t.id,'दुकानों का किराया एक साथ जमा करें') :
+      const pay = shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें') :
         currentLease ? action('payment',currentLease.id,'किराया जमा करें') : '';
       return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
         allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
