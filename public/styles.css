@@ -47,6 +47,30 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 
 .dashboard-logo{width:clamp(62px,12vw,132px);height:auto;flex:none;object-fit:contain;mix-blend-mode:screen}
 
+.due-report{color:#111;background:#fff;font-family:Arial,system-ui,sans-serif}
+.due-report h1,.due-report p,.due-report h2{color:#111;text-align:center}
+.due-report .table{overflow:visible}
+.due-report table{width:100%;border-collapse:collapse;table-layout:fixed}
+.due-report th,.due-report td{border:1px solid #555;padding:4px;vertical-align:top;overflow-wrap:anywhere}
+.due-report td:first-child,.due-report td:nth-child(2),.due-report td:nth-child(3),.due-report td:last-child{white-space:nowrap}
+@media print{
+  @page{size:A4 portrait;margin:8mm}
+  #print{padding:0!important}
+  .due-report{font-size:8.5pt}
+  .due-report h1{font-size:16pt;margin:0 0 3mm}
+  .due-report p{font-size:9pt;margin:1.5mm 0}
+  .due-report h2{font-size:10pt;text-align:right;margin-top:3mm}
+  .due-report .table{overflow:visible!important}
+  .due-report table{font-size:inherit}
+  .due-report thead{display:table-header-group}
+  .due-report tr{break-inside:avoid;page-break-inside:avoid}
+  .due-report th,.due-report td{padding:2mm 1.5mm}
+  .due-report-compact{font-size:7pt}
+  .due-report-compact th,.due-report-compact td{padding:1.3mm 1mm}
+  .due-report-extra-compact{font-size:6pt}
+  .due-report-extra-compact th,.due-report-extra-compact td{padding:1mm .7mm}
+}
+
  .rent-charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:16px}
 .rent-chart{min-width:0}.rent-chart h2{margin-bottom:14px}
 .rent-donut{display:block;width:min(150px,70%);margin:0 auto 16px}
