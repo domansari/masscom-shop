@@ -102,14 +102,15 @@ function render(error = '') {
           ? action('return-deposit',l.id,'सुरक्षा राशि वापस करें') : action('end',l.id,'समाप्त करें')
       ]));
   } else if (route === 'markets') {
-    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','खाली',''],ledger.markets.map(m=>{
+    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','खाली',''],ledger.markets.map(m=>{
       const shops = ledger.shops.filter(s=>s.market_id===m.id);
       const rented = shops.filter(s=>occupied(s.id)).length;
-      return [escape(m.name),shops.length,rented,shops.length-rented,action('open-market',m.id,'दुकानें देखें')];
+      const reserved = shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
+      return [escape(m.name),shops.length,rented,reserved,shops.length-rented-reserved,action('open-market',m.id,'दुकानें देखें')];
     }));
   } else if (route === 'shops') {
     body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],ledger.shops.filter(inMarket).map(s=>[
-      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),occupied(s.id)?'किराये पर':'खाली',
+      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),occupied(s.id)?'किराये पर':ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)?'आगे के लिए आवंटित':'खाली',
       action('shop',s.id,'संपादित करें')
     ]));
   } else if (route === 'tenants') {
@@ -208,7 +209,7 @@ root.addEventListener('click',event=>{
       options.map(s=>'<option value="'+escape(s.id)+'">'+escape(shopLabel(s))+'</option>').join('')+'</select></label>'+
 
       '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
-      '<p>किराया शुरू होने का महीना · '+showMonth(ledger.today.slice(0,7))+'</p>'+
+      '<label>किराया शुरू होने का महीना<input type="month" name="start_month" min="'+ledger.today.slice(0,7)+'" required></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
       '<label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
       'leases',d=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));

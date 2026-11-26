@@ -115,7 +115,10 @@ export async function onRequest({request,env}) {
       const tenant = await db.prepare('SELECT * FROM tenants WHERE id=?').bind(text(data.tenant_id)).first();
       const opening = data.opening ?? 0;
       const deposit = data.deposit ?? 0;
-      const startMonth = day().slice(0,7);
+      const startMonth = data.start_month;
+      if (typeof startMonth !== 'string' || !monthValid(startMonth) || startMonth < day().slice(0,7)) {
+        return send({error:'किराया शुरू होने के लिए इस महीने या आगे का कोई महीना चुनें।'},400);
+      }
       if (!tenant || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
         return send({error:'किरायेदार चुनें और किराया, पिछला बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
