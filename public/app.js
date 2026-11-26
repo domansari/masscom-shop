@@ -249,19 +249,11 @@ root.addEventListener('click',event=>{
       '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="'+escape(t?.phone)+'"></label>'+
       '<label>पता<input name="address" maxlength="240" value="'+escape(t?.address)+'"></label>'+
       '<label>व्यापार<input name="business" maxlength="120" value="'+escape(t?.business)+'"></label>'+
-      '<label>किरायेदार आईडी नंबर<input name="tenant_id_number" inputmode="numeric" pattern="[0-9]{12}" maxlength="12" required value="'+escape(t?.tenant_id_number)+'"></label><p>अपने रिकॉर्ड का 12 अंकों वाला आईडी नंबर दर्ज करें।</p>'+
-      '<p>'+(t?.has_photo?'मौजूदा फ़ोटो रख सकते हैं या नई फ़ोटो जोड़ सकते हैं।':'किरायेदार की फ़ोटो अनिवार्य है।')+'</p>'+
-      '<label>गैलरी या फ़ाइल से फ़ोटो चुनें<input type="file" name="gallery" accept="image/*"></label>'+
-      '<label>मोबाइल कैमरे से फ़ोटो खींचें<input type="file" name="camera" accept="image/*" capture="user"></label>',
-      'tenants',async ({gallery,camera,...details})=>{
-        const file = [camera,gallery].find(f=>f?.size);
-        if (!file && !t?.has_photo) throw new Error('किरायेदार की फ़ोटो जोड़ें।');
-        return {...details,id:t?.id,photo:file ? await tenantPhoto(file) : null};
-      });
-    const gallery = modal.querySelector('[name="gallery"]');
-    const camera = modal.querySelector('[name="camera"]');
-    gallery.onchange=()=>{if(gallery.files.length) camera.value='';};
-    camera.onchange=()=>{if(camera.files.length) gallery.value='';};
+      '<label>किरायेदार आईडी नंबर<input name="tenant_id_number" inputmode="numeric" pattern="[0-9]{12}" maxlength="12" required value="'+escape(t?.tenant_id_number)+'"></label>'+
+      '<label>फ़ोटो चुनें<input type="file" name="photo_file" accept="image/*"></label>',
+      'tenants',async ({photo_file,...details})=>({
+        ...details,id:t?.id,photo:photo_file?.size ? await tenantPhoto(photo_file) : null
+      }));
   }
   if (name==='shop') {
     const s=shop(id);
