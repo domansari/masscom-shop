@@ -11,19 +11,29 @@ topButton.setAttribute('aria-label','ऊपर जाएँ');
 topButton.title = 'ऊपर जाएँ';
 topButton.textContent = '↑';
 document.body.append(topButton);
+const tenantScrollPanels = () => [...document.querySelectorAll('.tenant-column')];
+const wiredTenantPanels = new WeakSet();
 const updateTopButton = () => {
   const isLongPage = document.documentElement.scrollHeight > window.innerHeight + 240;
-  topButton.classList.toggle('is-visible', isLongPage && window.scrollY > 240);
+  const panelScrolled = tenantScrollPanels().some(panel=>panel.scrollTop>240);
+  topButton.classList.toggle('is-visible', (isLongPage && window.scrollY>240) || panelScrolled);
+};
+const syncTenantPanelScroll = () => {
+  for (const panel of tenantScrollPanels()) {
+    if (wiredTenantPanels.has(panel)) continue;
+    wiredTenantPanels.add(panel);
+    panel.addEventListener('scroll',updateTopButton,{passive:true});
+  }
+  updateTopButton();
 };
 window.addEventListener('scroll',updateTopButton,{passive:true});
 window.addEventListener('resize',updateTopButton);
 topButton.addEventListener('click',()=>{
-  window.scrollTo({
-    top:0,
-    behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'
-  });
+  const behavior=window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
+  window.scrollTo({top:0,behavior});
+  tenantScrollPanels().forEach(panel=>panel.scrollTo({top:0,behavior}));
 });
-new MutationObserver(updateTopButton).observe(root,{childList:true,subtree:true});
+new MutationObserver(syncTenantPanelScroll).observe(root,{childList:true,subtree:true});
 const methods = {Cash:'नकद',UPI:'यूपीआई','Bank Transfer':'बैंक ट्रांसफ़र',Cheque:'चेक'};
 const shortDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',day:'numeric',month:'short',year:'numeric'});
 const monthDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',month:'long',year:'numeric'});
@@ -230,21 +240,27 @@ function render(error = '') {
       (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
-    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
-    table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
-      const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
-      const shops = new Set(allocations.map(l=>l.shop_id));
-      const currentLease = allocations.find(isOccupied) || allocations[0];
-      const pay = shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें','pay') :
-        currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '';
-      return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
-        allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
-        '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'आवंटन करें','assign')+
-        (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay];
-    })) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
-      escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
-      l.end_month ? showMonth(l.end_month) : 'जारी',tenancyPayments(receiptsByLease.get(l.id) || []),'<a class="button action-details" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
-    ]));
+    body = '<div class="tenant-columns">'+
+      '<section class="tenant-column">'+
+      toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
+      table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
+        const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
+        const shops = new Set(allocations.map(l=>l.shop_id));
+        const currentLease = allocations.find(isOccupied) || allocations[0];
+        const pay = shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें','pay') :
+          currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '';
+        return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
+          allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
+          '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'आवंटन करें','assign')+
+          (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay];
+      }))+
+      '</section><section class="tenant-column">'+
+      toolbar('किरायेदारी का रिकॉर्ड',marketPicker())+
+      table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
+        escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
+        l.end_month ? showMonth(l.end_month) : 'जारी',tenancyPayments(receiptsByLease.get(l.id) || []),'<a class="button action-details" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
+      ]))+
+      '</section></div>';
   } else if (route === 'rent') {
     const inRentMarket = l => !rentTenantMarket ||
       (shop(l.shop_id)?.market_id || 'unassigned')===rentTenantMarket;
