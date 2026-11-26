@@ -102,7 +102,10 @@ function render(error = '') {
   if (route.startsWith('tenant/')) {
     const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
-    if (tenant) body += toolbar(escape(tenant.name)) + '<p>'+escape(tenant.phone)+'</p>' +
+    if (tenant) body += toolbar(escape(tenant.name)) + '<p>मोबाइल नंबर · '+escape(tenant.phone || '—')+'</p>'+
+      '<p>पता · '+escape(tenant.address || '—')+'</p>'+
+      '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
+      '<p>आधार संख्या · '+(tenant.aadhaar_last4?'XXXX XXXX '+escape(tenant.aadhaar_last4):'—')+'</p>' +
       table(['दुकान','सुरक्षा राशि जमा','वापसी','किरायेदारी',''],ledger.leases.filter(l=>l.tenant_id===tenant.id).map(l=>[
         escape(shopLabel(shop(l.shop_id))),money(l.deposit),
         l.deposit_returned_on ? showDate(l.deposit_returned_on) : l.deposit ? 'वापसी बाकी' : '—',
@@ -202,7 +205,11 @@ root.addEventListener('click',event=>{
   }
   if (name==='tenant') {
     dialog('किरायेदार जोड़ें','<label>किरायेदार का नाम<input name="name" maxlength="120" required></label>'+
-      '<label>फ़ोन<input name="phone" type="tel" maxlength="32"></label>','tenants',d=>d);
+      '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="tel-national" required></label>'+
+      '<label>पता<input name="address" maxlength="240"></label>'+
+      '<label>व्यापार<input name="business" maxlength="120"></label>'+
+      '<label>आधार संख्या के आखिरी चार अंक<input name="aadhaar_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>',
+      'tenants',d=>d);
   }
   if (name==='shop') {
     const s=shop(id);

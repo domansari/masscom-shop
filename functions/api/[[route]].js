@@ -107,8 +107,12 @@ export async function onRequest({request,env}) {
     if (method === 'POST' && route === 'tenants') {
       const name = text(data.name);
       if (!name) return send({error:'किरायेदार का नाम दर्ज करें।'},400);
-      await db.prepare('INSERT INTO tenants VALUES (?,?,?)')
-        .bind(crypto.randomUUID(),name,text(data.phone,32)).run();
+      const phone = typeof data.phone === 'string' ? data.phone.trim() : '';
+      const aadhaarLast4 = typeof data.aadhaar_last4 === 'string' ? data.aadhaar_last4.trim() : '';
+      if (!/^[0-9]{10}$/.test(phone)) return send({error:'10 अंकों का मोबाइल नंबर दर्ज करें।'},400);
+      if (aadhaarLast4 && !/^[0-9]{4}$/.test(aadhaarLast4)) return send({error:'आधार के आखिरी चार अंक दर्ज करें।'},400);
+      await db.prepare('INSERT INTO tenants (id,name,phone,address,business,aadhaar_last4) VALUES (?,?,?,?,?,?)')
+        .bind(crypto.randomUUID(),name,phone,text(data.address,240),text(data.business,120),aadhaarLast4).run();
       return send({ok:true});
     }
     if (method === 'POST' && route === 'leases') {
