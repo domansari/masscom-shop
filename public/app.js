@@ -207,15 +207,21 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const rented = ledger.shops.filter(s=>occupied(s.id)).length;
-    const reserved = ledger.shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
-    const occupancy = [rented,ledger.shops.length-rented-reserved,reserved];
-    const occupancyLabels = ['किराये पर','खाली','आगे के लिए आवंटित'];
-    const colors = ['#34d399','#60a5fa','#fbbf24'];
+    const paid = [0,0,0];
+    for (const payment of ledger.payments) {
+      const receiptMonth = payment.paid_on.slice(0,7);
+      const category = payment.month==='opening' || payment.month<receiptMonth ? 0 :
+        payment.month===receiptMonth ? 1 : 2;
+      paid[category]+=payment.amount;
+    }
+    const rentAmounts = [...paid,Math.max(0,overdue()),rentRows(current).reduce((sum,row)=>sum+row.balance,0)];
+    const rentLabels = ['पुराना बकाया जमा','चालू किराया जमा','एडवांस जमा','पुराना बकाया बाकी','इस महीने का किराया बाकी'];
+    const chartTotal = rentAmounts.reduce((sum,amount)=>sum+amount,0);
+    const colors = ['#a78bfa','#34d399','#60a5fa','#fb7185','#fbbf24'];
     let offset=0;
-    const chart = occupancy.map((count,i)=>{
+    const chart = rentAmounts.map((amount,i)=>{
       const from=offset;
-      const length=ledger.shops.length?count/ledger.shops.length*100:0;
+      const length=chartTotal?amount/chartTotal*100:0;
       offset+=length;
       return '<circle cx="60" cy="60" r="44" pathLength="100" fill="none" stroke="'+colors[i]+'" stroke-width="30" '+
         'stroke-dasharray="'+length+' '+(100-length)+'" stroke-dashoffset="'+(-from)+'" transform="rotate(-90 60 60)"/>';
@@ -231,10 +237,10 @@ function render(error = '') {
       '<circle class="clock-pin" cx="40" cy="40" r="3"/></svg><time id="date"></time></div></div>'+
       '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
-      '<section class="panel occupancy-panel"><h2>दुकानों की स्थिति</h2><div class="occupancy-content">'+
-      '<svg viewBox="0 0 120 120" aria-hidden="true">'+chart+'</svg><ul>'+
-      occupancyLabels.map((label,i)=>'<li><span class="occupancy-dot occupancy-dot-'+i+'"></span>'+label+' <strong>'+occupancy[i]+'</strong></li>').join('')+
-      '<li>कुल दुकानें <strong>'+ledger.shops.length+'</strong></li></ul></div></section>'+
+      '<section class="panel occupancy-panel"><h2>किराया जमा और बकाया</h2><div class="occupancy-content">'+
+      '<svg viewBox="0 0 120 120" aria-hidden="true">'+(chartTotal?chart:'<circle cx="60" cy="60" r="44" fill="none" stroke="#334155" stroke-width="30"/>')+'</svg><ul>'+
+      rentLabels.map((label,i)=>'<li><span class="occupancy-dot occupancy-dot-'+i+'"></span>'+label+' <strong>'+money(rentAmounts[i])+'</strong></li>').join('')+
+      '</ul></div></section>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
       '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
       '<a class="button" href="#shops">दुकानें <strong>'+ledger.shops.length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
@@ -338,8 +344,12 @@ root.addEventListener('click',event=>{
   }
   if (name==='lease') {
     const options=ledger.shops.filter(s=>!ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
-    dialog('दुकान आवंटित करें','<label>किरायेदार<select name="tenant_id" required><option value="">किरायेदार चुनें</option>'+
-      ledger.tenants.map(t=>'<option value="'+escape(t.id)+'"'+(t.id===id?' selected':'')+'>'+escape(t.name+(t.phone?' · '+t.phone:''))+'</option>').join('')+
+    const tenantOptions = tenants=>'<option value="">किरायेदार चुनें</option>'+
+      tenants.map(t=>'<option value="'+escape(t.id)+'">'+escape(t.name+(t.phone?' · '+formatMobile(t.phone):''))+'</option>').join('');
+    dialog('दुकान आवंटित करें','<label>किरायेदार का मार्केट<select name="tenant_market"><option value="">सभी मार्केट</option>'+
+      ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
+      '<option value="unallocated">बिना चालू आवंटन</option></select></label><label>किरायेदार<select name="tenant_id" required>'+
+      tenantOptions(ledger.tenants)+
       '</select></label><label>मार्केट<select name="market_id" required><option value="">मार्केट चुनें</option>'+
       ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
@@ -350,7 +360,21 @@ root.addEventListener('click',event=>{
       startMonthOptions(ledger.today)+'</select></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
       '<label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
-      'leases',({market_id,...d})=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+      'leases',({market_id,tenant_market,...d})=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+    const tenantMarket = modal.querySelector('[name="tenant_market"]');
+    const tenantSelect = modal.querySelector('[name="tenant_id"]');
+    if (id) tenantSelect.value=id;
+    tenantMarket.addEventListener('change',()=>{
+      const selectedTenant = tenantSelect.value;
+      const market = tenantMarket.value;
+      const current = ledger.today.slice(0,7);
+      const activeLeases = ledger.leases.filter(l=>!l.end_month || l.end_month>current);
+      const tenants = !market ? ledger.tenants : ledger.tenants.filter(t=>market==='unallocated'
+        ? !activeLeases.some(l=>l.tenant_id===t.id)
+        : activeLeases.some(l=>l.tenant_id===t.id && shop(l.shop_id)?.market_id===market));
+      tenantSelect.innerHTML=tenantOptions(tenants);
+      tenantSelect.value=tenants.some(t=>t.id===selectedTenant)?selectedTenant:'';
+    });
     const marketSelect = modal.querySelector('[name="market_id"]');
     const shopSelect = modal.querySelector('[name="shop_id"]');
     marketSelect.addEventListener('change',()=>{
