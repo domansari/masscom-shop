@@ -180,16 +180,32 @@ export async function onRequest({request,env}) {
     }
     if (method === 'POST' && route === 'edit-allocation') {
       const {rent,opening,deposit} = data;
-      if (!validAmount(rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
-        return send({error:'किराया, शुरुआती बकाया और सुरक्षा राशि सही दर्ज करें।'},400);
+      const shopId = text(data.shop_id,120);
+      const allocation = await db.prepare('SELECT id,shop_id,start_month FROM leases WHERE id=? AND end_month IS NULL')
+        .bind(text(data.id)).first();
+      if (!allocation) return send({error:'यह आवंटन अब संशोधित नहीं किया जा सकता।'},409);
+      if (!shopId || !validAmount(rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+        return send({error:'दुकान चुनें और किराया, शुरुआती बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
-      const result = await db.prepare(`UPDATE leases SET rent=?, opening=?, deposit=?
+      if (shopId!==allocation.shop_id) {
+        const targetShop = await db.prepare('SELECT id FROM shops WHERE id=?').bind(shopId).first();
+        if (!targetShop) return send({error:'चुनी गई दुकान उपलब्ध नहीं है।'},404);
+        const conflict = await db.prepare(`SELECT 1 FROM leases
+          WHERE shop_id=? AND id<>? AND (end_month IS NULL OR end_month>=?) LIMIT 1`)
+          .bind(shopId,allocation.id,allocation.start_month).first();
+        if (conflict) return send({error:'यह दुकान किसी दूसरी किरायेदारी में आवंटित है। खाली दुकान चुनें।'},409);
+      }
+      const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?
         WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
+          AND (shop_id=? OR NOT EXISTS (
+            SELECT 1 FROM leases AS other WHERE other.shop_id=? AND other.id<>leases.id
+              AND (other.end_month IS NULL OR other.end_month>=leases.start_month)
+          ))
           AND NOT EXISTS (
             SELECT 1 FROM payments WHERE lease_id=leases.id GROUP BY month
             HAVING SUM(amount)>CASE WHEN month='opening' THEN ? ELSE ? END
-          )`).bind(rent,opening,deposit,text(data.id),deposit,opening,rent).run();
-      if (!result.meta.changes) return send({error:'आवंटन बंद है, राशि दर्ज भुगतान से कम है या सुरक्षा राशि पहले ही लौटाई जा चुकी है।'},409);
+          )`).bind(shopId,rent,opening,deposit,text(data.id),deposit,shopId,shopId,opening,rent).run();
+      if (!result.meta.changes) return send({error:'आवंटन बंद है, दुकान उपलब्ध नहीं है, राशि दर्ज भुगतान से कम है या सुरक्षा राशि पहले ही लौटाई जा चुकी है।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'leases') {
