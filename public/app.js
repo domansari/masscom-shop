@@ -281,7 +281,7 @@ function render(error = '') {
       '<hr>'+toolbar('मासिक किराया','<label>किराये का महीना<select id="month">'+monthOptions+'</select></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
-        balance>0?action('payment',l.id,'किराया जमा करें','pay'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें')
+        balance>0?action('payment',l.id,'किराया जमा करें','pay'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें','pay')
       ]));
     body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','शुरुआत में दर्ज रकम','जमा','अब बाकी',''],
       openingRows().filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
