@@ -142,7 +142,7 @@ function render(error = '') {
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
         balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा'
       ]));
-    body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','कुल बकाया','जमा','बाकी',''],
+    body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','शुरुआत में दर्ज रकम','जमा','अब बाकी',''],
       openingRows().filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.opening),money(paid),money(balance),
         balance>0?action('opening-payment',l.id,'बकाया जमा करें'):'पूरा जमा'
