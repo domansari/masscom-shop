@@ -435,6 +435,9 @@ root.addEventListener('click',event=>{
     window.print();
   }
 });
+function paymentCategory(period,current) {
+  return period==='opening' || period<current ? 'arrears' : period===current ? 'current' : 'advance';
+}
 function openTenantPayment(name,id) {
   const combined = name==='tenant-payment';
   const leases = combined ? ledger.leases.filter(l=>l.tenant_id===id) : [lease(id)];
@@ -450,10 +453,19 @@ function openTenantPayment(name,id) {
     const label = escape(shopLabel(shop(l.shop_id)));
     return combined ? '<details><summary>'+label+'</summary>'+fields+'</details>' : '<h3>'+label+'</h3>'+fields;
   }).join('');
+  const months = [...new Set(paymentOptions.flatMap(({periods})=>periods.map(([key])=>key))
+    .filter(key=>paymentCategory(key,current)==='advance'))].sort();
+  const categories = new Set(paymentOptions.flatMap(({periods})=>periods.map(([key])=>paymentCategory(key,current))));
+  const quickFill = combined ? '<fieldset><legend>सभी दुकानों की बाकी राशि भरें</legend>'+
+    '<button type="button" data-fill="current"'+(categories.has('current')?'':' disabled')+'>चालू महीने का पूरा किराया</button> '+
+    '<button type="button" data-fill="arrears"'+(categories.has('arrears')?'':' disabled')+'>पूरा बकाया</button>'+
+    (months.length?'<label>एडवांस का महीना<select id="advance-month">'+months.map(m=>'<option value="'+m+'">'+showMonth(m)+'</option>').join('')+
+      '</select></label><button type="button" data-fill="advance">इस महीने का पूरा एडवांस</button>':'')+
+    '<p id="payment-fill-status" role="status"></p></fieldset>' : '';
   const paymentId=crypto.randomUUID();
   const tenant = combined ? ledger.tenants.find(t=>t.id===id) : tenantFor(leases[0]);
   dialog(combined?'दुकानों का किराया एक साथ जमा करें':'किराया जमा करें','<p>'+escape(tenant?.name ?? leases[0].tenant)+'</p>'+
-    '<fieldset><legend>जिन महीनों का किराया लेना है, उनकी राशि भरें</legend>'+periodFields+'</fieldset>'+
+    quickFill+'<fieldset><legend>दुकान और महीने के हिसाब से राशि</legend>'+periodFields+'</fieldset>'+
     '<p>कुल भुगतान <strong id="payment-total"></strong></p>'+
     '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
     '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
@@ -470,6 +482,22 @@ function openTenantPayment(name,id) {
   const paymentFields = [...modal.querySelectorAll('[name^="period_"]')];
   const updateTotal = ()=>{modal.querySelector('#payment-total').textContent=money(paymentFields.reduce((sum,input)=>sum+minor(input.value),0));};
   for (const input of paymentFields) input.addEventListener('input',updateTotal);
+  for (const button of modal.querySelectorAll('[data-fill]')) {
+    button.addEventListener('click',()=>{
+      const category = button.dataset.fill;
+      const advanceMonth = modal.querySelector('#advance-month')?.value;
+      for (const input of paymentFields) {
+        const period = input.name.split('/')[1];
+        if (paymentCategory(period,current)===category && (category!=='advance' || period===advanceMonth)) {
+          input.value=input.max;
+          const details=input.closest('details');
+          if (details) details.open=true;
+        }
+      }
+      updateTotal();
+      modal.querySelector('#payment-fill-status').textContent='बाकी राशि भर दी गई है। कुल भुगतान नीचे देखें।';
+    });
+  }
   updateTotal();
   const method=modal.querySelector('[name="method"]');
   const field=modal.querySelector('#transaction-field');
