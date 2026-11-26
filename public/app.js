@@ -230,7 +230,7 @@ function render(error = '') {
       (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
-    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
+    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
     table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
       const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
       const shops = new Set(allocations.map(l=>l.shop_id));
@@ -239,7 +239,7 @@ function render(error = '') {
         currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '';
       return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
         allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
-        '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें','assign')+
+        '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'आवंटन करें','assign')+
         (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay];
     })) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
