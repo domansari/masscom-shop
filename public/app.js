@@ -230,7 +230,7 @@ function render(error = '') {
       (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
-    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
+    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
     table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
       const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
       const shops = new Set(allocations.map(l=>l.shop_id));
