@@ -189,11 +189,21 @@ export async function onRequest({request,env}) {
       if (!tenant || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
         return send({error:'किरायेदार चुनें और किराया, पिछला बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
-      const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit)
-        SELECT ?,id,?,?,?,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
-          SELECT 1 FROM leases WHERE shop_id=shops.id AND (end_month IS NULL OR end_month>=?)
-        )`).bind(crypto.randomUUID(),tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit,data.shop_id,startMonth).run();
-      if (!result.meta.changes) return send({error:'इस दुकान के लिए उस महीने से किरायेदारी पहले से दर्ज है।'},409);
+      const shopIds = data.shop_ids ?? [data.shop_id];
+      if (!Array.isArray(shopIds) || !shopIds.length || shopIds.length>127 ||
+          shopIds.some(id=>typeof id!=='string' || !id || id.length>120) ||
+          new Set(shopIds).size!==shopIds.length) return send({error:'कम से कम एक सही दुकान चुनें।'},400);
+      const requested = shopIds.map(shop_id=>({id:crypto.randomUUID(),shop_id}));
+      const result = await db.prepare(`WITH requested AS (
+        SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.shop_id') AS shop_id FROM json_each(?)
+      ), available AS (
+        SELECT requested.* FROM requested JOIN shops ON shops.id=requested.shop_id
+        WHERE NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
+      ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit)
+      SELECT id,shop_id,?,?,?,?,?,?,? FROM available
+      WHERE (SELECT count(*) FROM available)=(SELECT count(*) FROM requested)`)
+        .bind(JSON.stringify(requested),startMonth,tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit).run();
+      if (!result.meta.changes) return send({error:'चुनी गई किसी दुकान का इस महीने से आवंटन उपलब्ध नहीं है। दुकानें दोबारा चुनें।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && ['return-deposit','end-lease'].includes(route)) {
