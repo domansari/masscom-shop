@@ -187,19 +187,26 @@ function render(error = '') {
   if (route.startsWith('tenant/')) {
     const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
-    if (tenant) body += toolbar(escape(tenant.name),action('tenant',tenant.id,'विवरण संपादित करें')) +
-      (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(formatMobile(tenant.phone) || '—')+'</p>'+
-      '<p>पिता का नाम · '+escape(tenant.father_name || '—')+'</p>'+
-      '<p>पता · '+escape(tenant.address || '—')+'</p>'+
-      '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
-      '<p>किरायेदार आईडी नंबर · '+escape(formatTenantId(tenant.tenant_id_number) || '—')+'</p>' +
-      table(['दुकान','सुरक्षा राशि जमा','वापसी','किरायेदारी',''],ledger.leases.filter(l=>l.tenant_id===tenant.id).map(l=>[
-        escape(shopLabel(shop(l.shop_id))),money(l.deposit),
-        l.deposit_returned_on ? showDate(l.deposit_returned_on) : l.deposit ? 'वापसी बाकी' : '—',
-        l.end_month ? showMonth(l.end_month)+' तक' : 'जारी',
-        l.end_month ? '' : l.deposit && !l.deposit_returned_on
-          ? action('return-deposit',l.id,'सुरक्षा राशि वापस करें') : action('end',l.id,'समाप्त करें')
-      ]));
+    if (tenant) {
+      const hasActiveLease = ledger.leases.some(l=>l.tenant_id===tenant.id && (!l.end_month || l.end_month>=current));
+      const statusAction = tenant.is_active && hasActiveLease ? '' :
+        action('tenant-status',tenant.id,tenant.is_active?'निष्क्रिय करें':'सक्रिय करें',tenant.is_active?'edit':'assign');
+      body += toolbar(escape(tenant.name),action('tenant',tenant.id,'विवरण संपादित करें')+(statusAction?' '+statusAction:'')) +
+        (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(formatMobile(tenant.phone) || '—')+'</p>'+
+        '<p>पिता का नाम · '+escape(tenant.father_name || '—')+'</p>'+
+        '<p>पता · '+escape(tenant.address || '—')+'</p>'+
+        '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
+        '<p>किरायेदार आईडी नंबर · '+escape(formatTenantId(tenant.tenant_id_number) || '—')+'</p>'+
+        '<p>स्थिति · '+(tenant.is_active?'सक्रिय':'निष्क्रिय')+'</p>'+
+        table(['दुकान','सुरक्षा राशि जमा','वापसी','किरायेदारी','रसीद',''],ledger.leases.filter(l=>l.tenant_id===tenant.id).map(l=>[
+          escape(shopLabel(shop(l.shop_id))),money(l.deposit),
+          l.deposit_returned_on ? showDate(l.deposit_returned_on) : l.deposit ? 'वापसी बाकी' : '—',
+          l.end_month ? showMonth(l.end_month)+' तक' : 'जारी',
+          l.deposit>0 && l.deposit_receipt_number ? action('print-deposit',l.id,'रसीद प्रिंट करें') : '—',
+          l.end_month ? '' : l.deposit && !l.deposit_returned_on
+            ? action('return-deposit',l.id,'सुरक्षा राशि वापस करें') : action('end',l.id,'समाप्त करें')
+        ]));
+    }
   } else if (route === 'markets') {
     body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],ledger.markets.map(m=>{
       const shops = ledger.shops.filter(s=>s.market_id===m.id);
@@ -238,12 +245,19 @@ function render(error = '') {
         const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
         const shops = new Set(allocations.map(l=>l.shop_id));
         const currentLease = allocations.find(isOccupied) || allocations[0];
-        const pay = shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें','pay') :
-          currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '';
-        return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
+        const hasActiveLease = ledger.leases.some(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>=current));
+        const pay = t.is_active ? (shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें','pay') :
+          currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '') : '';
+        const statusAction = t.is_active
+          ? (hasActiveLease ? '' : action('tenant-status',t.id,'निष्क्रिय करें','edit'))
+          : action('tenant-status',t.id,'सक्रिय करें','assign');
+        const tenancyActions = t.is_active
+          ? ' '+action('lease',t.id,'आवंटन करें','assign')+
+            (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay
+          : '';
+        return [escape(t.name)+(t.is_active?'':' <span class="tenant-inactive">निष्क्रिय</span>'),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
           allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
-          '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'आवंटन करें','assign')+
-          (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay];
+          '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+statusAction+tenancyActions];
       }));
     const tenancyRecordContent = toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
@@ -445,6 +459,14 @@ root.addEventListener('click',event=>{
         ...details,id:t?.id,photo:photo_file?.size ? await tenantPhoto(photo_file) : null
       }));
   }
+  if (name==='tenant-status') {
+    const tenant=ledger.tenants.find(t=>t.id===id);
+    if (!tenant) return;
+    const nextActive=tenant.is_active?0:1;
+    dialog(nextActive?'किरायेदार सक्रिय करें':'किरायेदार निष्क्रिय करें',
+      '<p>'+escape(tenant.name)+'</p><p>पुराने किरायेदारी और भुगतान रिकॉर्ड सुरक्षित रहेंगे।</p>',
+      'tenant-status',()=>({id,is_active:nextActive}),nextActive?'सक्रिय करें':'निष्क्रिय करें');
+  }
   if (name==='shop') {
     const s=shop(id);
     const hasUnfinishedLease = s && ledger.leases.some(l=>l.shop_id===s.id &&
@@ -493,7 +515,7 @@ root.addEventListener('click',event=>{
     dialog('दुकान आवंटित करें','<label>किरायेदार का मार्केट<select name="tenant_market"><option value="">सभी मार्केट</option>'+
       ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       '<option value="unallocated">बिना चालू आवंटन</option></select></label><label>किरायेदार<select name="tenant_id" required>'+
-      tenantOptions(ledger.tenants)+
+      tenantOptions(ledger.tenants.filter(t=>t.is_active))+
       '</select></label><label>मार्केट<select name="market_id" required><option value="">मार्केट चुनें</option>'+
       ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
@@ -517,7 +539,8 @@ root.addEventListener('click',event=>{
       const market = tenantMarket.value;
       const current = ledger.today.slice(0,7);
       const activeLeases = ledger.leases.filter(l=>!l.end_month || l.end_month>current);
-      const tenants = !market ? ledger.tenants : ledger.tenants.filter(t=>market==='unallocated'
+      const activeTenants = ledger.tenants.filter(t=>t.is_active);
+      const tenants = !market ? activeTenants : activeTenants.filter(t=>market==='unallocated'
         ? !activeLeases.some(l=>l.tenant_id===t.id)
         : activeLeases.some(l=>l.tenant_id===t.id && shop(l.shop_id)?.market_id===market));
       tenantSelect.innerHTML=tenantOptions(tenants);
@@ -542,6 +565,18 @@ root.addEventListener('click',event=>{
       '" value="'+ledger.today.slice(0,7)+'" required></label>'+passwordField,'end-lease',d=>({...d,id}),'किरायेदारी समाप्त करें');
   }
   if (['payment','opening-payment','tenant-payment'].includes(name)) openTenantPayment(name,id);
+  if (name==='print-deposit') {
+    const l=lease(id);
+    if (!l || !l.deposit_receipt_number || l.deposit<=0) return;
+    const tenant=tenantFor(l);
+    document.querySelector('#print').innerHTML='<h1>सुरक्षा राशि की रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p>'+
+      '<p>रसीद नंबर '+escape(l.deposit_receipt_number)+'</p><hr>'+
+      '<p>किरायेदार · '+escape(tenant?.name || l.tenant)+'</p>'+
+      '<p>दुकान · '+escape(shopLabel(shop(l.shop_id)))+'</p>'+
+      '<p>जमा तारीख · '+(l.deposit_paid_on?showDate(l.deposit_paid_on):'पुराने रिकॉर्ड में तारीख उपलब्ध नहीं')+'</p>'+
+      '<h2>सुरक्षा राशि · '+money(l.deposit)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
+    window.print();
+  }
   if (name==='print') {
     const p=receiptRows().find(item=>item.id===id);
     const l=lease(p.lease_id);
