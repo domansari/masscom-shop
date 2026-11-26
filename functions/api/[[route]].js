@@ -152,16 +152,20 @@ export async function onRequest({request,env}) {
       return send({ok:true});
     }
     if (method === 'POST' && route === 'payments') {
+      const transactionId = typeof data.transaction_id==='string' ? data.transaction_id.trim() : '';
+      if (data.method==='UPI' && (!transactionId || transactionId.length>100)) {
+        return send({error:'यूपीआई भुगतान के लिए ट्रांज़ैक्शन आईडी दर्ज करें (अधिकतम 100 अक्षर)।'},400);
+      }
       if ((data.month!=='opening' && !monthValid(data.month)) || !validAmount(data.amount) ||
-          !['Cash','UPI','Bank Transfer','Cheque'].includes(data.method) ||
+          !['Cash','UPI'].includes(data.method) ||
           !dateValid(data.paid_on) || data.paid_on > day() || !/^[a-f0-9-]{36}$/.test(data.id)) {
         return send({error:'सही राशि, भुगतान की तारीख और तरीका दर्ज करें।'},400);
       }
       if (await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) return send({ok:true});
-      const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on)
-        SELECT ?,id,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
+      const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on,transaction_id)
+        SELECT ?,id,?,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
         AND (CASE WHEN ?='opening' THEN opening ELSE rent END) - COALESCE((SELECT SUM(amount) FROM payments WHERE lease_id=leases.id AND month=?),0)>=?
-        ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,
+        ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,data.method==='UPI'?transactionId:null,
           data.lease_id,data.month,data.month,data.month,data.month,data.month,data.amount).run();
       if (!result.meta.changes && !await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) {
         return send({error:'राशि बाकी किराये से अधिक है या चुना हुआ महीना किरायेदारी की अवधि से बाहर है।'},409);
