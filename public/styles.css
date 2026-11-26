@@ -47,11 +47,13 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 
 .dashboard-logo{width:clamp(62px,12vw,132px);height:auto;flex:none;object-fit:contain;mix-blend-mode:screen}
 
-.occupancy-panel{margin-top:16px}
-.occupancy-content{display:flex;align-items:center;justify-content:center;gap:clamp(14px,5vw,54px);flex-wrap:wrap}
-.occupancy-content svg{width:clamp(112px,23vw,180px);height:auto}
-.occupancy-content ul{list-style:none;margin:0;padding:0;display:grid;gap:8px;min-width:170px}
-.occupancy-content li{display:flex;align-items:center;gap:8px}
-.occupancy-content li strong{margin-inline-start:auto}
-.occupancy-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-.occupancy-dot-0{background:#a78bfa}.occupancy-dot-1{background:#34d399}.occupancy-dot-2{background:#60a5fa}.occupancy-dot-3{background:#fb7185}.occupancy-dot-4{background:#fbbf24}
+ .rent-charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:16px}
+.rent-chart{min-width:0}.rent-chart h2{margin-bottom:14px}
+.rent-donut{display:block;width:min(150px,70%);margin:0 auto 16px}
+.rent-chart ul{list-style:none;padding:0;margin:0;display:grid;gap:10px}
+.rent-chart li{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rent-swatch{order:-1;width:10px;height:10px;flex:none}
+.rent-chart-label{display:flex;justify-content:space-between;gap:8px;flex:1}
+.rent-bar{width:100%;height:10px;border-radius:5px;overflow:hidden}
+@media(max-width:850px){.rent-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.rent-charts{grid-template-columns:1fr}}
