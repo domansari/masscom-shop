@@ -186,7 +186,7 @@ function render(error = '') {
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
     const cards = [['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
-    root.innerHTML = '<div class="hero dashboard-hero"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
+    root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
       '<div class="dashboard-clock"><svg viewBox="0 0 80 80" aria-hidden="true"><circle class="clock-face" cx="40" cy="40" r="37"/>'+
       Array.from({length:12},(_,i)=>'<line class="clock-tick" x1="40" y1="8" x2="40" y2="'+(i%3===0?14:11)+'" transform="rotate('+i*30+' 40 40)"/>').join('')+
       '<line id="clock-hour" class="clock-hour" x1="40" y1="40" x2="40" y2="22"/>'+
