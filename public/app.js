@@ -353,14 +353,18 @@ root.addEventListener('click',event=>{
       '</select></label><label>मार्केट<select name="market_id" required><option value="">मार्केट चुनें</option>'+
       ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
-      '<label>दुकान<select name="shop_id" required><option value="">पहले मार्केट चुनें</option></select></label>'+
+      '<fieldset><legend>दुकानें चुनें</legend><div id="allocation-shops">पहले मार्केट चुनें</div></fieldset>'+
 
-      '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
+      '<label>मासिक किराया प्रति दुकान (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
       '<label>किराया शुरू होने का महीना<select name="start_month" required><option value="">महीना चुनें</option>'+
       startMonthOptions(ledger.today)+'</select></label>'+
-      '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
-      '<label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
-      'leases',({market_id,tenant_market,...d})=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+      '<label>शुरुआती बकाया प्रति दुकान (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
+      '<label>जमा सुरक्षा राशि प्रति दुकान (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
+      'leases',d=>{
+      const shop_ids = Object.keys(d).filter(key=>key.startsWith('shop_')).map(key=>key.slice(5));
+      if (!shop_ids.length) throw new Error('कम से कम एक दुकान चुनें।');
+      return {shop_ids,tenant_id:d.tenant_id,start_month:d.start_month,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)};
+    });
     const tenantMarket = modal.querySelector('[name="tenant_market"]');
     const tenantSelect = modal.querySelector('[name="tenant_id"]');
     if (id) tenantSelect.value=id;
@@ -376,13 +380,12 @@ root.addEventListener('click',event=>{
       tenantSelect.value=tenants.some(t=>t.id===selectedTenant)?selectedTenant:'';
     });
     const marketSelect = modal.querySelector('[name="market_id"]');
-    const shopSelect = modal.querySelector('[name="shop_id"]');
+    const shopList = modal.querySelector('#allocation-shops');
     marketSelect.addEventListener('change',()=>{
       const selected = marketSelect.value;
       const shops = options.filter(s=>(s.market_id || 'unassigned')===selected);
-      const prompt = !selected ? 'पहले मार्केट चुनें' : shops.length ? 'दुकान चुनें' : 'कोई दुकान उपलब्ध नहीं है';
-      shopSelect.replaceChildren(new Option(prompt,''));
-      for (const s of shops) shopSelect.add(new Option(shopNumber(s),s.id));
+      shopList.innerHTML = shops.length ? shops.map(s=>'<label><span><input type="checkbox" name="shop_'+escape(s.id)+'"> '+escape(shopNumber(s))+'</span></label>').join('')
+        : selected ? 'कोई दुकान उपलब्ध नहीं है' : 'पहले मार्केट चुनें';
     });
   }
   if (name==='return-deposit') {
