@@ -73,6 +73,34 @@ function openingRows() {
     return {l,paid,balance:l.opening-paid};
   });
 }
+function receiptRows() {
+  const groups = new Map();
+  for (const p of ledger.payments) {
+    const key = p.receipt_group || p.id;
+    if (!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(p);
+  }
+  return [...groups.entries()].map(([key,items])=>({
+    ...items.find(p=>p.id===key),items,amount:items.reduce((sum,p)=>sum+p.amount,0)
+  }));
+}
+function payablePeriods(l) {
+  const current = ledger.today.slice(0,7);
+  const available = new Map();
+  if (l.opening) available.set('opening',l.opening);
+  const date = new Date(l.start_month+'-01T00:00:00Z');
+  const limit = new Date(Math.max(date.getTime(),Date.parse(current+'-01')));
+  limit.setUTCMonth(limit.getUTCMonth()+12);
+  const last = [limit.toISOString().slice(0,7),l.end_month || '9999-12'].sort()[0];
+  for (let period=l.start_month;period<=last;period=date.toISOString().slice(0,7)) {
+    available.set(period,l.rent);
+    date.setUTCMonth(date.getUTCMonth()+1);
+  }
+  for (const p of ledger.payments) {
+    if (p.lease_id===l.id && available.has(p.month)) available.set(p.month,available.get(p.month)-p.amount);
+  }
+  return [...available].filter(([,balance])=>balance>0);
+}
 const paymentPeriod = p => p.month==='opening' ? 'शुरुआती बकाया' : showMonth(p.month);
 const passwordField = '<label>एडमिन पासवर्ड<input name="password" type="password" minlength="8" maxlength="20" autocomplete="current-password" required></label>';
 function overdue() {
@@ -140,7 +168,7 @@ function render(error = '') {
     body = toolbar('मासिक किराया',marketPicker()+'<label>किराये का महीना<input id="month" type="month" value="'+escape(month)+'" required></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
-        balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा'
+        balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें')
       ]));
     body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','शुरुआत में दर्ज रकम','जमा','अब बाकी',''],
       openingRows().filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
@@ -148,9 +176,9 @@ function render(error = '') {
         balance>0?action('opening-payment',l.id,'बकाया जमा करें'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
-    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],ledger.payments.filter(p=>inMarket(shop(lease(p.lease_id).shop_id))).map(p=>[
+    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],receiptRows().filter(p=>inMarket(shop(lease(p.lease_id).shop_id))).map(p=>[
       showDate(p.paid_on),escape(shopLabel(shop(lease(p.lease_id).shop_id))),escape(lease(p.lease_id).tenant),
-      paymentPeriod(p),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('print',p.id,'प्रिंट करें')
+      p.items.map(paymentPeriod).join(' · '),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('print',p.id,'प्रिंट करें')
     ]));
   } else {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
@@ -297,16 +325,31 @@ root.addEventListener('click',event=>{
   }
   if (name==='payment' || name==='opening-payment') {
     const opening = name==='opening-payment';
-    const period = opening ? 'opening' : month;
-    const balance=(opening ? openingRows() : rentRows(month)).find(r=>r.l.id===id).balance/100;
+    const periods = payablePeriods(lease(id));
+    const current = ledger.today.slice(0,7);
+    if (!periods.length) { window.alert('इस दुकान के लिए कोई किराया जमा करना बाकी नहीं है।'); return; }
+    const periodFields = periods.map(([key,balance])=>{
+      const type = key==='opening' ? '' : key<current ? 'बकाया · ' : key===current ? 'चालू · ' : 'एडवांस · ';
+      return '<label>'+type+paymentPeriod({month:key})+' (बाकी '+money(balance)+')'+
+        '<input type="number" name="period_'+key+'" step=".01" min="0" max="'+balance/100+'"></label>';
+    }).join('');
     const paymentId=crypto.randomUUID();
     dialog(opening?'शुरुआती बकाया जमा करें':'किराया जमा करें','<p>'+escape(shopLabel(shop(lease(id).shop_id)))+' · '+escape(tenantFor(lease(id))?.name ?? lease(id).tenant)+' · '+(opening?'शुरुआती बकाया':showMonth(month))+'</p>'+
-      '<label>राशि (₹)<input type="number" step=".01" min=".01" max="'+balance+'" value="'+balance+'" name="amount" required></label>'+
+      '<fieldset><legend>जिन महीनों का किराया लेना है, उनकी राशि भरें</legend>'+periodFields+'</fieldset>'+
+      '<p>कुल भुगतान <strong id="payment-total"></strong></p>'+
       '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
       '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
       '<label>भुगतान का तरीका<select name="method"><option value="Cash">नकद</option><option value="UPI">यूपीआई</option></select></label>'+
       '<label id="transaction-field" hidden>यूपीआई ट्रांज़ैक्शन आईडी<input name="transaction_id" maxlength="100" disabled></label>',
-      'payments',d=>({...d,id:paymentId,lease_id:id,month:period,amount:minor(d.amount)}),'भुगतान सेव करें');
+      'payments',({receipt_number,paid_on,method,transaction_id,...amounts})=>{
+        const items = Object.entries(amounts).map(([key,value])=>({month:key.slice(7),amount:minor(value)})).filter(item=>item.amount>0);
+        if (!items.length) throw new Error('किसी महीने या बकाये की राशि भरें।');
+        return {id:paymentId,lease_id:id,receipt_number,paid_on,method,transaction_id,items};
+      },'भुगतान सेव करें');
+    const paymentFields = [...modal.querySelectorAll('[name^="period_"]')];
+    const updateTotal = ()=>{modal.querySelector('#payment-total').textContent=money(paymentFields.reduce((sum,input)=>sum+minor(input.value),0));};
+    for (const input of paymentFields) input.addEventListener('input',updateTotal);
+    updateTotal();
     const method=modal.querySelector('[name="method"]');
     const field=modal.querySelector('#transaction-field');
     const input=field.querySelector('input');
@@ -318,11 +361,11 @@ root.addEventListener('click',event=>{
     });
   }
   if (name==='print') {
-    const p=ledger.payments.find(item=>item.id===id);
+    const p=receiptRows().find(item=>item.id===id);
     const l=lease(p.lease_id);
     document.querySelector('#print').innerHTML='<h1>किराये की रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p><p>ऐप रसीद आईडी '+escape(p.id)+
-      '</p>'+(p.receipt_number?'<p>रसीद नंबर '+escape(p.receipt_number)+'</p>':'')+'<hr><p>दुकान '+escape(shopLabel(shop(l.shop_id)))+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p><p>किराये का महीना '+paymentPeriod(p)+
-      '</p><p>भुगतान की तारीख '+showDate(p.paid_on)+'</p><p>भुगतान का तरीका '+escape(methods[p.method])+'</p>'+(p.transaction_id?'<p>यूपीआई ट्रांज़ैक्शन आईडी '+escape(p.transaction_id)+'</p>':'')+'<h2>'+money(p.amount)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
+      '</p>'+(p.receipt_number?'<p>रसीद नंबर '+escape(p.receipt_number)+'</p>':'')+'<hr><p>दुकान '+escape(shopLabel(shop(l.shop_id)))+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p>'+table(['किराये का महीना','जमा राशि'],p.items.map(item=>[paymentPeriod(item),money(item.amount)]))+
+      '<p>भुगतान की तारीख '+showDate(p.paid_on)+'</p><p>भुगतान का तरीका '+escape(methods[p.method])+'</p>'+(p.transaction_id?'<p>यूपीआई ट्रांज़ैक्शन आईडी '+escape(p.transaction_id)+'</p>':'')+'<h2>'+money(p.amount)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
     window.print();
   }
 });

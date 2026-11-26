@@ -188,17 +188,32 @@ export async function onRequest({request,env}) {
       if (data.method==='UPI' && (!transactionId || transactionId.length>100)) {
         return send({error:'यूपीआई भुगतान के लिए ट्रांज़ैक्शन आईडी दर्ज करें (अधिकतम 100 अक्षर)।'},400);
       }
-      if ((data.month!=='opening' && !monthValid(data.month)) || !validAmount(data.amount) ||
+      const items = data.items ?? [{month:data.month,amount:data.amount}];
+      if (!Array.isArray(items) || !items.length || items.length>1200 ||
+          items.some(item=>!item || typeof item.month!=='string' ||
+            (item.month!=='opening' && !monthValid(item.month)) || !validAmount(item.amount)) ||
+          new Set(items.map(item=>item.month)).size!==items.length ||
           !['Cash','UPI'].includes(data.method) ||
           !dateValid(data.paid_on) || data.paid_on > day() || !/^[a-f0-9-]{36}$/.test(data.id)) {
         return send({error:'सही राशि, भुगतान की तारीख और तरीका दर्ज करें।'},400);
       }
       if (await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) return send({ok:true});
-      const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on,transaction_id,receipt_number)
-        SELECT ?,id,?,?,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
-        AND (CASE WHEN ?='opening' THEN opening ELSE rent END) - COALESCE((SELECT SUM(amount) FROM payments WHERE lease_id=leases.id AND month=?),0)>=?
-        ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,data.method==='UPI'?transactionId:null,receiptNumber,
-          data.lease_id,data.month,data.month,data.month,data.month,data.month,data.amount).run();
+      const allocations = items.map((item,index)=>({...item,id:index?crypto.randomUUID():data.id}));
+      const result = await db.prepare(`WITH requested AS (
+        SELECT key AS position, json_extract(value,'$.id') AS id,
+          json_extract(value,'$.month') AS month, json_extract(value,'$.amount') AS amount
+        FROM json_each(?)
+      ), payable AS (
+        SELECT requested.*,leases.id AS lease_id FROM requested JOIN leases ON leases.id=?
+        WHERE (requested.month='opening' OR (leases.start_month<=requested.month AND (leases.end_month IS NULL OR leases.end_month>=requested.month)))
+          AND (CASE WHEN requested.month='opening' THEN leases.opening ELSE leases.rent END) -
+              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.lease_id=leases.id AND p.month=requested.month),0)>=requested.amount
+      )
+      INSERT INTO payments (id,lease_id,month,amount,method,paid_on,transaction_id,receipt_number,receipt_group)
+      SELECT id,lease_id,month,amount,?,?,?,CASE WHEN position=0 THEN ? END,?
+      FROM payable WHERE (SELECT count(*) FROM payable)=(SELECT count(*) FROM requested)
+        AND NOT EXISTS (SELECT 1 FROM payments WHERE id=?)`).bind(JSON.stringify(allocations),data.lease_id,
+          data.method,data.paid_on,data.method==='UPI'?transactionId:null,receiptNumber,data.id,data.id).run();
       if (!result.meta.changes && !await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) {
         return send({error:'राशि बाकी किराये से अधिक है या चुना हुआ महीना किरायेदारी की अवधि से बाहर है।'},409);
       }
