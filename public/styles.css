@@ -90,9 +90,12 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 }
 .action-edit:hover{color:#fff;background:#92400e;border-color:#fcd34d}
 .action-pay{
-  color:#fff;background:#16a34a;border-color:#86efac;font-weight:700
+  display:inline-flex;align-items:center;justify-content:center;
+  color:#fff;background:#15803d;border:1px solid #86efac;
+  border-radius:8px;padding:9px 13px;font-weight:700;
+  box-shadow:0 3px 10px #0003
 }
-.action-pay:hover{background:#15803d;border-color:#bbf7d0}
+.action-pay:hover{color:#fff;background:#166534;border-color:#bbf7d0}
 
 
 .action-add-tenant{
@@ -126,3 +129,17 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 .tenant-tab[aria-pressed="true"]:hover{background:#1d4ed8}
 .tenant-tab:focus-visible{outline:2px solid #a5f3fc;outline-offset:2px}
 .tenant-tab-panel[hidden]{display:none}
+
+
+.payment-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.payment-quick-actions button{font-weight:700;border-radius:9px}
+.payment-quick-actions [data-fill="current"]{color:#fff;background:#15803d;border-color:#86efac}
+.payment-quick-actions [data-fill="current"]:hover{background:#166534}
+.payment-quick-actions [data-fill="arrears"]{color:#fff;background:#b45309;border-color:#fbbf24}
+.payment-quick-actions [data-fill="arrears"]:hover{background:#92400e}
+.payment-quick-actions #select-advance{color:#fff;background:#2563eb;border-color:#93c5fd}
+.payment-quick-actions #select-advance:hover{background:#1d4ed8}
+#advance-controls{margin-top:8px;padding:12px;border:1px solid #ffffff2e;border-radius:12px;background:#ffffff08}
+#advance-month-selectors{display:grid;gap:8px}
+#add-advance-month{margin-top:4px;color:#042f2e;background:#2dd4bf;border-color:#99f6e4;font-weight:700}
+#add-advance-month:hover{background:#5eead4}
