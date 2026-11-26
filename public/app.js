@@ -202,7 +202,8 @@ function render(error = '') {
     table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
       escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
         .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—','<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')+
-      (ledger.leases.some(l=>l.tenant_id===t.id)?' '+action('tenant-payment',t.id,'दुकानों का किराया एक साथ जमा करें'):'')
+      (new Set(ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current))
+        .map(l=>l.shop_id)).size>1?' '+action('tenant-payment',t.id,'दुकानों का किराया एक साथ जमा करें'):'')
     ])) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
       l.end_month ? showMonth(l.end_month) : 'जारी',tenancyPayments(receiptsByLease.get(l.id) || []),'<a class="button" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
