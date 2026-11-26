@@ -89,7 +89,8 @@ function render(error = '') {
   const toolbar = (title,tools='')=>'<div class="toolbar"><h2>'+title+'</h2><div>'+tools+'</div></div>';
   let body;
   const current = ledger.today.slice(0,7);
-  const occupied = id => ledger.leases.some(l=>l.shop_id===id && includesMonth(l,current));
+  const isOccupied = l => l.start_month<=current && (!l.end_month || l.end_month>current);
+  const occupied = id => ledger.leases.some(l=>l.shop_id===id && isOccupied(l));
   if (route.startsWith('tenant/')) {
     const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
@@ -116,7 +117,7 @@ function render(error = '') {
   } else if (route === 'tenants') {
     body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')) +
     table(['किरायेदार','फ़ोन','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
-      escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && includesMonth(l,current))
+      escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
         .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—','<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')
     ])) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(l.tenant),escape(l.phone),money(l.rent),showMonth(l.start_month),
