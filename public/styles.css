@@ -107,3 +107,21 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
   color:#042f2e;background:#2dd4bf;border-color:#99f6e4;font-weight:600
 }
 .action-template:hover{color:#042f2e;background:#5eead4;border-color:#ccfbf1}
+
+
+.tenant-columns{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:14px;align-items:start
+}
+.tenant-column{
+  min-width:0;height:calc(100vh - 112px);min-height:300px;
+  overflow:auto;overscroll-behavior:contain;
+  padding:14px;border:1px solid #ffffff33;border-radius:16px;
+  background:#0b1228ab;backdrop-filter:blur(14px);
+  scrollbar-width:thin;scrollbar-color:#64748b #111b32
+}
+.tenant-column .toolbar{align-items:flex-start}
+@media(max-width:900px){
+  .tenant-columns{grid-template-columns:1fr}
+  .tenant-column{height:62vh;min-height:280px}
+}
