@@ -57,3 +57,20 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 .rent-bar{width:100%;height:10px;border-radius:5px;overflow:hidden}
 @media(max-width:850px){.rent-charts{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.rent-charts{grid-template-columns:1fr}}
+
+
+#back-to-top{
+  position:fixed;right:20px;bottom:20px;z-index:30;
+  display:grid;place-items:center;width:48px;height:48px;padding:0;
+  border:1px solid #a5f3fc88;border-radius:50%;
+  color:#e0f2fe;background:#4338cae8;
+  box-shadow:0 8px 24px #0007,0 0 18px #4338ca66;
+  font-size:27px;line-height:1;font-weight:600;
+  opacity:0;visibility:hidden;transform:translateY(10px);
+  transition:opacity .2s ease,transform .2s ease,visibility .2s;
+}
+#back-to-top.is-visible{opacity:1;visibility:visible;transform:translateY(0)}
+#back-to-top:hover{background:#4f46e5;border-color:#a5f3fc}
+#back-to-top:focus-visible{outline:2px solid #a5f3fc;outline-offset:3px}
+@media(max-width:560px){#back-to-top{right:14px;bottom:14px;width:44px;height:44px}}
+@media(prefers-reduced-motion:reduce){#back-to-top{transition:none}}
