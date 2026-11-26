@@ -127,13 +127,12 @@ export async function onRequest({request,env}) {
       const business = text(data.business,120);
       if (data.id) {
         const result = await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,tenant_id_number=?,photo=COALESCE(?,photo)
-          WHERE id=? AND (? IS NOT NULL OR photo IS NOT NULL)`)
-          .bind(name,phone,address,business,tenantIdNumber,photo ?? null,text(data.id),photo ?? null).run();
-        if (!result.meta.changes) return send({error:'किरायेदार की फ़ोटो जोड़ें और फिर सेव करें।'},400);
+          WHERE id=?`)
+          .bind(name,phone,address,business,tenantIdNumber,photo ?? null,text(data.id)).run();
+        if (!result.meta.changes) return send({error:'किरायेदार का रिकॉर्ड नहीं मिला।'},404);
       } else {
-        if (!photo) return send({error:'किरायेदार की फ़ोटो जोड़ें।'},400);
         await db.prepare('INSERT INTO tenants (id,name,phone,address,business,tenant_id_number,photo) VALUES (?,?,?,?,?,?,?)')
-          .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,photo).run();
+          .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,photo ?? null).run();
       }
       return send({ok:true});
     }
