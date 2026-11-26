@@ -25,6 +25,7 @@ const table = (headers,rows) => rows.length ? '<div class="table"><table><thead>
   '<p>अभी कोई रिकॉर्ड नहीं है।</p>';
 let ledger, month, clock;
 let marketFilter = '';
+let tenantListMarket = '';
 const shop = id => ledger.shops.find(s=>s.id===id);
 const marketOf = s => ledger.markets.find(m=>m.id===s.market_id);
 const shopNumber = s => marketOf(s) ? s.code.slice(marketOf(s).prefix.length+1) : s.code;
@@ -198,8 +199,18 @@ function render(error = '') {
         receiptsByLease.get(leaseId).push({...receipt,items,amount:items.reduce((sum,item)=>sum+item.amount,0)});
       }
     }
-    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
-    table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>{
+    const assignedMarkets = new Map();
+    for (const l of ledger.leases) {
+      if (l.end_month && l.end_month<=current) continue;
+      if (!assignedMarkets.has(l.tenant_id)) assignedMarkets.set(l.tenant_id,new Set());
+      assignedMarkets.get(l.tenant_id).add(shop(l.shop_id).market_id || 'unassigned');
+    }
+    const visibleTenants = ledger.tenants.filter(t=>!tenantListMarket ||
+      (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
+    const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
+      '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
+    body = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
+    table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
       const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
       const shops = new Set(allocations.map(l=>l.shop_id));
       const currentLease = allocations.find(isOccupied) || allocations[0];
@@ -294,6 +305,11 @@ function render(error = '') {
   document.querySelector('#rent-tenant-form')?.addEventListener('submit',event=>{
     event.preventDefault();
     openTenantPayment('tenant-payment',new FormData(event.currentTarget).get('tenant_id'));
+  });
+  document.querySelector('#tenant-list-market')?.addEventListener('change',event=>{
+    tenantListMarket=event.target.value;
+    render();
+    document.querySelector('#tenant-list-market')?.focus();
   });
   document.querySelector('#market-filter')?.addEventListener('change',event=>{marketFilter=event.target.value;render();});
   document.querySelector('#month')?.addEventListener('change',event=>{
