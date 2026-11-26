@@ -29,19 +29,19 @@ export async function onRequest({request,env}) {
   const route = url.pathname.slice(5);
   const method = request.method;
   const db = env.SHOP_DB;
-  if (!db || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8 || env.ADMIN_PASSWORD.length > 20) return send({error:'Cloudflare setup is pending.'},503);
+  if (!db || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8 || env.ADMIN_PASSWORD.length > 20) return send({error:'Cloudflare का सेटअप अभी बाकी है।'},503);
   if (method !== 'GET' && (method !== 'POST' || request.headers.get('Origin') !== url.origin)) {
-    return send({error:'Request blocked.'},403);
+    return send({error:'यह अनुरोध स्वीकार नहीं किया गया।'},403);
   }
   try {
     let data = {};
     if (method === 'POST') {
-      try { data = await request.json(); } catch { return send({error:'Invalid request.'},400); }
+      try { data = await request.json(); } catch { return send({error:'अनुरोध अमान्य है।'},400); }
       if (!data || typeof data !== 'object') return send({error:'Invalid request.'},400);
     }
     if (method === 'POST' && route === 'login') {
       if (typeof data.password !== 'string' || data.password.length < 8 || data.password.length > 20) {
-        return send({error:'Enter a password of 8–20 characters.'},400);
+        return send({error:'8 से 20 अक्षरों का पासवर्ड डालें।'},400);
       }
       await db.prepare('CREATE TABLE IF NOT EXISTS login_attempts (client TEXT PRIMARY KEY, expires INTEGER NOT NULL, attempts INTEGER NOT NULL)').run();
       const client = request.headers.get('CF-Connecting-IP') || 'unknown';
@@ -52,9 +52,9 @@ export async function onRequest({request,env}) {
         expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END
         WHERE expires<=? OR attempts<10
         RETURNING attempts`).bind(client,time+900000,time,time,time).first();
-      if (!attempt) return send({error:'Too many attempts. Try again in 15 minutes.'},429);
+      if (!attempt) return send({error:'बहुत ज़्यादा कोशिशें हुई हैं। 15 मिनट बाद फिर कोशिश करें।'},429);
       if (!await matches(data.password,env.ADMIN_PASSWORD)) {
-        return send({error:'Incorrect password.'},401);
+        return send({error:'पासवर्ड गलत है।'},401);
       }
       await db.prepare('DELETE FROM login_attempts WHERE client=? OR expires<=?').bind(client,time).run();
       const id = crypto.randomUUID();
@@ -67,7 +67,7 @@ export async function onRequest({request,env}) {
     }
     const id = request.headers.get('Cookie')?.match(/(?:^|; )shop_session=([a-f0-9-]{36})(?:;|$)/)?.[1];
     if (!id || !await db.prepare('SELECT id FROM sessions WHERE id=? AND expires>?').bind(id,Date.now()).first()) {
-      return send({error:'Please sign in.'},401);
+      return send({error:'कृपया लॉगिन करें।'},401);
     }
     if (method === 'POST' && route === 'logout') {
       await db.prepare('DELETE FROM sessions WHERE id=?').bind(id).run();
@@ -83,7 +83,7 @@ export async function onRequest({request,env}) {
     }
     if (method === 'POST' && route === 'shops') {
       const code = text(data.code,40);
-      if (!code) return send({error:'Enter a shop number or name.'},400);
+      if (!code) return send({error:'दुकान का नंबर या नाम दर्ज करें।'},400);
       if (data.id) {
         await db.prepare('UPDATE shops SET code=?, address=? WHERE id=?').bind(code,text(data.address,240),data.id).run();
       } else {
@@ -94,28 +94,28 @@ export async function onRequest({request,env}) {
     if (method === 'POST' && route === 'leases') {
       const tenant = text(data.tenant);
       if (!tenant || !monthValid(data.start_month) || !validAmount(data.rent)) {
-        return send({error:'Enter a tenant, start month and valid monthly rent.'},400);
+        return send({error:'किरायेदार का नाम, शुरुआती महीना और सही किराया दर्ज करें।'},400);
       }
       const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month)
         SELECT ?,id,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
           SELECT 1 FROM leases WHERE shop_id=shops.id AND (end_month IS NULL OR end_month>=?)
         )`).bind(crypto.randomUUID(),tenant,text(data.phone,32),data.rent,data.start_month,data.shop_id,data.start_month).run();
-      if (!result.meta.changes) return send({error:'This shop already has a tenancy covering that start month.'},409);
+      if (!result.meta.changes) return send({error:'इस दुकान के लिए उस महीने से किरायेदारी पहले से दर्ज है।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'end-lease') {
-      if (!monthValid(data.end_month)) return send({error:'Select the last billable month.'},400);
+      if (!monthValid(data.end_month)) return send({error:'किराये का अंतिम महीना चुनें।'},400);
       const result = await db.prepare(`UPDATE leases SET end_month=? WHERE id=? AND end_month IS NULL AND start_month<=?
         AND NOT EXISTS (SELECT 1 FROM payments WHERE lease_id=leases.id AND month>?)`)
         .bind(data.end_month,data.id,data.end_month,data.end_month).run();
-      if (!result.meta.changes) return send({error:'The last month must include the start month and every payment already recorded.'},409);
+      if (!result.meta.changes) return send({error:'अंतिम महीना, शुरुआती महीने और दर्ज भुगतानों के महीनों से पहले का नहीं हो सकता।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'payments') {
       if (!monthValid(data.month) || !validAmount(data.amount) ||
           !['Cash','UPI','Bank Transfer','Cheque'].includes(data.method) ||
           !dateValid(data.paid_on) || data.paid_on > day() || !/^[a-f0-9-]{36}$/.test(data.id)) {
-        return send({error:'Enter a valid amount, payment date and method.'},400);
+        return send({error:'सही राशि, भुगतान की तारीख और तरीका दर्ज करें।'},400);
       }
       if (await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) return send({ok:true});
       const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on)
@@ -124,14 +124,14 @@ export async function onRequest({request,env}) {
         ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,
           data.lease_id,data.month,data.month,data.month,data.amount).run();
       if (!result.meta.changes && !await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) {
-        return send({error:'The payment exceeds the remaining rent or falls outside the tenancy.'},409);
+        return send({error:'राशि बाकी किराये से अधिक है या चुना हुआ महीना किरायेदारी की अवधि से बाहर है।'},409);
       }
       return send({ok:true});
     }
-    return send({error:'Page not found.'},404);
+    return send({error:'पेज नहीं मिला।'},404);
   } catch (error) {
-    if (String(error).includes('UNIQUE constraint failed: shops.code')) return send({error:'That shop number already exists.'},409);
+    if (String(error).includes('UNIQUE constraint failed: shops.code')) return send({error:'यह दुकान नंबर पहले से दर्ज है।'},409);
     console.error('Shop API request failed', route, error.name);
-    return send({error:'Could not complete the request. Please try again.'},500);
+    return send({error:'काम पूरा नहीं हो सका। कृपया फिर कोशिश करें।'},500);
   }
 }
