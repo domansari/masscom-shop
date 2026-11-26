@@ -104,9 +104,18 @@ export async function onRequest({request,env}) {
       const code = selectedMarket && number ? selectedMarket.prefix+'-'+number : number;
       if (!code) return send({error:'दुकान का नंबर या नाम दर्ज करें।'},400);
       if (data.id) {
-        await db.prepare('UPDATE shops SET code=?, address=?, market_id=? WHERE id=?').bind(code,text(data.address,240),selectedMarket?.id ?? null,data.id).run();
+        const blocked = data.is_blocked==='1' ? 1 : 0;
+        if (blocked) {
+          const current = await db.prepare('SELECT 1 FROM leases WHERE shop_id=? AND (end_month IS NULL OR end_month>=?) LIMIT 1')
+            .bind(text(data.id),day().slice(0,7)).first();
+          if (current) return send({error:'किरायेदारी पूरी होने तक इस दुकान को ब्लॉक नहीं किया जा सकता।'},409);
+        }
+        const result = await db.prepare('UPDATE shops SET code=?, address=?, market_id=?, is_blocked=? WHERE id=?')
+          .bind(code,text(data.address,240),selectedMarket?.id ?? null,blocked,text(data.id)).run();
+        if (!result.meta.changes) return send({error:'दुकान नहीं मिली।'},404);
       } else {
-        await db.prepare('INSERT INTO shops (id,code,address,market_id) VALUES (?,?,?,?)').bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null).run();
+        await db.prepare('INSERT INTO shops (id,code,address,market_id) VALUES (?,?,?,?)')
+          .bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null).run();
       }
       return send({ok:true});
     }
@@ -228,7 +237,8 @@ export async function onRequest({request,env}) {
         SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.shop_id') AS shop_id FROM json_each(?)
       ), available AS (
         SELECT requested.* FROM requested JOIN shops ON shops.id=requested.shop_id
-        WHERE NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
+        WHERE shops.is_blocked=0
+          AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
       ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit)
       SELECT id,shop_id,?,?,?,?,?,?,? FROM available
       WHERE (SELECT count(*) FROM available)=(SELECT count(*) FROM requested)`)
