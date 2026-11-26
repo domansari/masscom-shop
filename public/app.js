@@ -131,6 +131,22 @@ function overdue() {
   }
   return amount+openingRows().reduce((sum,row)=>sum+row.balance,0)-ledger.payments.filter(p=>p.month<current).reduce((sum,p)=>sum+p.amount,0);
 }
+function chartPanel(title, rows, format, bar=false) {
+  const total = rows.reduce((sum,[,value])=>sum+value,0);
+  const max = Math.max(1,...rows.map(([,value])=>value));
+  let offset=0;
+  const segments = rows.map(([,value,color])=>{
+    const length=total?value/total*100:0;
+    const position=offset;
+    offset+=length;
+    return '<circle cx="60" cy="60" r="44" pathLength="100" fill="none" stroke="'+color+'" stroke-width="30" stroke-dasharray="'+length+' '+(100-length)+'" stroke-dashoffset="'+(-position)+'" transform="rotate(-90 60 60)"/>';
+  }).join('');
+  const graph = bar ? '' : '<svg class="rent-donut" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="44" fill="none" stroke="#334155" stroke-width="30"/>'+segments+'</svg>';
+  return '<section class="panel rent-chart"><h2>'+title+'</h2>'+graph+'<ul>'+
+    rows.map(([label,value,color])=>'<li><span class="rent-chart-label">'+label+' <strong>'+format(value)+'</strong></span>'+
+      (bar?'<svg class="rent-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect width="100" height="6" fill="#334155"/><rect width="'+value/max*100+'" height="6" fill="'+color+'"/></svg>':
+      '<svg class="rent-swatch" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="'+color+'"/></svg>')+'</li>').join('')+'</ul></section>';
+}
 function render(error = '') {
   clearInterval(clock);
   logout.hidden = !ledger;
@@ -211,25 +227,24 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const paid = [0,0,0];
-    for (const payment of ledger.payments) {
-      const receiptMonth = payment.paid_on.slice(0,7);
-      const category = payment.month==='opening' || payment.month<receiptMonth ? 0 :
-        payment.month===receiptMonth ? 1 : 2;
-      paid[category]+=payment.amount;
-    }
-    const rentAmounts = [...paid,Math.max(0,overdue()),rentRows(current).reduce((sum,row)=>sum+row.balance,0)];
-    const rentLabels = ['पुराना बकाया जमा','चालू किराया जमा','एडवांस जमा','पुराना बकाया बाकी','इस महीने का किराया बाकी'];
-    const chartTotal = rentAmounts.reduce((sum,amount)=>sum+amount,0);
-    const colors = ['#a78bfa','#34d399','#60a5fa','#fb7185','#fbbf24'];
-    let offset=0;
-    const chart = rentAmounts.map((amount,i)=>{
-      const from=offset;
-      const length=chartTotal?amount/chartTotal*100:0;
-      offset+=length;
-      return '<circle cx="60" cy="60" r="44" pathLength="100" fill="none" stroke="'+colors[i]+'" stroke-width="30" '+
-        'stroke-dasharray="'+length+' '+(100-length)+'" stroke-dashoffset="'+(-from)+'" transform="rotate(-90 60 60)"/>';
-    }).join('');
+    const rented = ledger.shops.filter(s=>occupied(s.id)).length;
+    const reserved = ledger.shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
+    const monthRent = rentRows(current);
+    const oldPaid = ledger.payments.filter(p=>p.month==='opening' || p.month<current).reduce((sum,p)=>sum+p.amount,0);
+    const advance = ledger.payments.filter(p=>p.month!=='opening' && p.month>current).reduce((sum,p)=>sum+p.amount,0);
+    const counts = new Intl.NumberFormat('hi-IN');
+    const charts = chartPanel('मार्केट और दुकानें · '+counts.format(ledger.markets.length)+' मार्केट',[
+      ['किराये पर',rented,'#34d399'],['खाली',ledger.shops.length-rented-reserved,'#60a5fa'],
+      ['आगे के लिए आवंटित',reserved,'#fbbf24']
+    ],value=>counts.format(value)) +
+    chartPanel('चालू महीना · '+showMonth(current),[
+      ['किराया जमा',monthRent.reduce((sum,row)=>sum+row.paid,0),'#34d399'],
+      ['किराया बाकी',monthRent.reduce((sum,row)=>sum+row.balance,0),'#fb7185']
+    ],money) +
+    chartPanel('पुराना बकाया और एडवांस',[
+      ['पुराने महीनों का जमा',oldPaid,'#a78bfa'],['पुराना बकाया बाकी',Math.max(0,overdue()),'#fb7185'],
+      ['आने वाले महीनों का एडवांस',advance,'#60a5fa']
+    ],money,true);
     const cards = [['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
     root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
@@ -241,10 +256,7 @@ function render(error = '') {
       '<circle class="clock-pin" cx="40" cy="40" r="3"/></svg><time id="date"></time></div></div>'+
       '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
-      '<section class="panel occupancy-panel"><h2>किराया जमा और बकाया</h2><div class="occupancy-content">'+
-      '<svg viewBox="0 0 120 120" aria-hidden="true">'+(chartTotal?chart:'<circle cx="60" cy="60" r="44" fill="none" stroke="#334155" stroke-width="30"/>')+'</svg><ul>'+
-      rentLabels.map((label,i)=>'<li><span class="occupancy-dot occupancy-dot-'+i+'"></span>'+label+' <strong>'+money(rentAmounts[i])+'</strong></li>').join('')+
-      '</ul></div></section>'+
+      '<div class="rent-charts">'+charts+'</div>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
       '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
       '<a class="button" href="#shops">दुकानें <strong>'+ledger.shops.length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
