@@ -332,7 +332,7 @@ function render(error = '') {
       ['कुल बकाया',Math.max(0,overdue()),'#fb7185'],
       ['कुल एडवांस',advance,'#60a5fa']
     ],money);
-    const cards = [['किरायेदार प्रबंधन','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
+    const cards = [['किरायेदार प्रबंधन','किरायेदार जोड़ें, आवंटन करें, संदेश भेजें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
     root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
       '<div class="dashboard-clock"><svg viewBox="0 0 80 80" aria-hidden="true"><circle class="clock-face" cx="40" cy="40" r="37"/>'+
