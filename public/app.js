@@ -201,15 +201,17 @@ function render(error = '') {
           ? action('return-deposit',l.id,'सुरक्षा राशि वापस करें') : action('end',l.id,'समाप्त करें')
       ]));
   } else if (route === 'markets') {
-    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','खाली',''],ledger.markets.map(m=>{
+    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],ledger.markets.map(m=>{
       const shops = ledger.shops.filter(s=>s.market_id===m.id);
-      const rented = shops.filter(s=>occupied(s.id)).length;
-      const reserved = shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
-      return [escape(m.name),shops.length,rented,reserved,shops.length-rented-reserved,action('open-market',m.id,'दुकानें देखें','shops')];
+      const blocked = shops.filter(s=>s.is_blocked).length;
+      const rentable = shops.filter(s=>!s.is_blocked);
+      const rented = rentable.filter(s=>occupied(s.id)).length;
+      const reserved = rentable.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
+      return [escape(m.name),shops.length,rented,reserved,blocked,rentable.length-rented-reserved,action('open-market',m.id,'दुकानें देखें','shops')];
     }));
   } else if (route === 'shops') {
     body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],ledger.shops.filter(inMarket).map(s=>[
-      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),occupied(s.id)?'किराये पर':ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)?'आगे के लिए आवंटित':'खाली',
+      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),s.is_blocked?'स्वयं उपयोग (ब्लॉक)':occupied(s.id)?'किराये पर':ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)?'आगे के लिए आवंटित':'खाली',
       action('shop',s.id,'संपादित करें')
     ]));
   } else if (route === 'tenants') {
@@ -297,15 +299,17 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const rented = ledger.shops.filter(s=>occupied(s.id)).length;
-    const reserved = ledger.shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
+    const blocked = ledger.shops.filter(s=>s.is_blocked).length;
+    const rentable = ledger.shops.filter(s=>!s.is_blocked);
+    const rented = rentable.filter(s=>occupied(s.id)).length;
+    const reserved = rentable.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
     const monthRent = rentRows(current);
     const oldPaid = ledger.payments.filter(p=>p.month==='opening' || p.month<current).reduce((sum,p)=>sum+p.amount,0);
     const advance = ledger.payments.filter(p=>p.month!=='opening' && p.month>current).reduce((sum,p)=>sum+p.amount,0);
     const counts = new Intl.NumberFormat('hi-IN');
     const charts = chartPanel('मार्केट और दुकानें · '+counts.format(ledger.markets.length)+' मार्केट',[
-      ['किराये पर',rented,'#34d399'],['खाली',ledger.shops.length-rented-reserved,'#60a5fa'],
-      ['आगे के लिए आवंटित',reserved,'#fbbf24']
+      ['किराये पर',rented,'#34d399'],['खाली',rentable.length-rented-reserved,'#60a5fa'],
+      ['आगे के लिए आवंटित',reserved,'#fbbf24'],['स्वयं उपयोग',blocked,'#a78bfa']
     ],value=>counts.format(value)) +
     chartPanel('चालू महीना · '+showMonth(current),[
       ['किराया जमा',monthRent.reduce((sum,row)=>sum+row.paid,0),'#34d399'],
@@ -443,9 +447,16 @@ root.addEventListener('click',event=>{
   }
   if (name==='shop') {
     const s=shop(id);
+    const hasUnfinishedLease = s && ledger.leases.some(l=>l.shop_id===s.id &&
+      (!l.end_month || l.end_month>=ledger.today.slice(0,7)));
+    const blockControl = s
+      ? '<input type="hidden" name="is_blocked" value="0"><label class="checkbox-label"><input type="checkbox" name="is_blocked" value="1"'+
+        (s.is_blocked?' checked':'')+(hasUnfinishedLease?' disabled':'')+'> स्वयं उपयोग के लिए दुकान ब्लॉक करें</label>'+
+        (hasUnfinishedLease?'<p class="field-help">किरायेदारी पूरी होने तक दुकान ब्लॉक नहीं की जा सकती।</p>':'')
+      : '';
     dialog(s?'दुकान संपादित करें':'दुकान जोड़ें','<label>मार्केट<select name="market_id">'+marketOptions(s?.market_id || (!s && marketFilter !== 'unassigned' ? marketFilter : ''))+'</select></label>'+
       '<label>दुकान का नंबर या नाम<input name="code" maxlength="40" required value="'+escape(s ? shopNumber(s) : '')+'"></label>'+
-      '<label>पता<input name="address" maxlength="240" value="'+escape(s?.address)+'"></label>','shops',d=>({...d,id}));
+      '<label>पता<input name="address" maxlength="240" value="'+escape(s?.address)+'"></label>'+blockControl,'shops',d=>({...d,id}));
   }
   if (name==='edit-allocation') {
     const allocations = ledger.leases.filter(l=>l.tenant_id===id && !l.end_month);
@@ -464,7 +475,7 @@ root.addEventListener('click',event=>{
     const populate = ()=>{
       const allocation = lease(picker.value);
       for (const field of ['rent','opening','deposit']) form.elements.namedItem(field).value=allocation[field]/100;
-      const availableShops = ledger.shops.filter(s=>!ledger.leases.some(other=>
+      const availableShops = ledger.shops.filter(s=>(!s.is_blocked || s.id===allocation.shop_id) && !ledger.leases.some(other=>
         other.id!==allocation.id && other.shop_id===s.id &&
         (!other.end_month || other.end_month>=allocation.start_month)));
       shopPicker.innerHTML=availableShops.map(s=>
@@ -476,7 +487,7 @@ root.addEventListener('click',event=>{
     populate();
   }
   if (name==='lease') {
-    const options=ledger.shops.filter(s=>!ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
+    const options=ledger.shops.filter(s=>!s.is_blocked && !ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
     const tenantOptions = tenants=>'<option value="">किरायेदार चुनें</option>'+
       tenants.map(t=>'<option value="'+escape(t.id)+'">'+escape(t.name+(t.phone?' · '+formatMobile(t.phone):''))+'</option>').join('');
     dialog('दुकान आवंटित करें','<label>किरायेदार का मार्केट<select name="tenant_market"><option value="">सभी मार्केट</option>'+
@@ -564,7 +575,7 @@ function openTenantPayment(name,id) {
   const quickFill = '<div class="payment-quick-actions">'+
     '<button type="button" data-fill="current"'+(!categories.has('current')||categories.has('arrears')?' disabled':'')+'>चालू माह</button> '+
     '<button type="button" data-fill="arrears"'+(categories.has('arrears')?'':' disabled')+'>बकाया</button>'+
-    (months.length?' <button type="button" id="select-advance" aria-controls="advance-controls" aria-expanded="false">एडवांस</button>':'')+
+    (months.length?' <button type="button" id="select-advance" aria-controls="advance-controls" aria-expanded="false"'+(categories.has('arrears')||categories.has('current')?' disabled':'')+'>एडवांस</button>':'')+
     '</div>'+
     (months.length?'<div id="advance-controls" hidden>'+
       '<div id="advance-month-selectors"><label>एडवांस का महीना<select id="advance-month-0" data-advance-month><option value="">महीना चुनें</option>'+
@@ -597,29 +608,33 @@ function openTenantPayment(name,id) {
   const advanceFields = paymentFields.filter(input=>paymentCategory(input.name.split('/')[1],current)==='advance');
   const fillStatus = modal.querySelector('#payment-fill-status');
   const currentButton = modal.querySelector('[data-fill="current"]');
-  const arrearsIncluded = () => arrearsFields.every(input=>
+  const arrearsButton = modal.querySelector('[data-fill="arrears"]');
+  const advanceButton = modal.querySelector('#select-advance');
+  const fieldsIncluded = fields=>fields.every(input=>
     Math.round(Number(input.value||0)*100)>=Math.round(Number(input.max||0)*100));
-  const updateCurrentButton = () => {
-    if (currentButton) currentButton.disabled=!currentFields.length || (arrearsFields.length>0 && !arrearsIncluded());
+  const updatePaymentButtons = () => {
+    if (arrearsButton) arrearsButton.disabled=!arrearsFields.length;
+    if (currentButton) currentButton.disabled=!currentFields.length || !fieldsIncluded(arrearsFields);
+    if (advanceButton) advanceButton.disabled=!advanceFields.length ||
+      !fieldsIncluded(arrearsFields) || !fieldsIncluded(currentFields);
   };
   for (const input of paymentFields) input.addEventListener('input',()=>{
     updateTotal();
-    updateCurrentButton();
+    updatePaymentButtons();
   });
   for (const button of modal.querySelectorAll('[data-fill]')) {
     button.addEventListener('click',()=>{
-      if (button.dataset.fill==='current' && !arrearsIncluded()) return;
+      if (button.dataset.fill==='current' && !fieldsIncluded(arrearsFields)) return;
       for (const input of paymentFields) {
         if (paymentCategory(input.name.split('/')[1],current)===button.dataset.fill) input.value=input.max;
       }
       updateTotal();
-      updateCurrentButton();
+      updatePaymentButtons();
       fillStatus.textContent=button.dataset.fill==='arrears'
         ? 'बकाया कुल भुगतान में जुड़ गया है।'
         : 'चालू माह का किराया कुल भुगतान में जुड़ गया है।';
     });
   }
-  const advanceButton = modal.querySelector('#select-advance');
   const advanceControls = modal.querySelector('#advance-controls');
   const advanceSelectors = modal.querySelector('#advance-month-selectors');
   const addAdvanceButton = modal.querySelector('#add-advance-month');
@@ -654,6 +669,7 @@ function openTenantPayment(name,id) {
       : '';
   };
   advanceButton?.addEventListener('click',()=>{
+    if (!fieldsIncluded(arrearsFields) || !fieldsIncluded(currentFields)) return;
     advanceControls.hidden=false;
     advanceButton.setAttribute('aria-expanded','true');
     advanceSelectors.querySelector('[data-advance-month]')?.focus();
@@ -672,7 +688,7 @@ function openTenantPayment(name,id) {
     advanceSelectors.querySelector('#'+id)?.focus();
     updateAdvancePayments();
   });
-  updateCurrentButton();
+  updatePaymentButtons();
   updateTotal();
   const method=modal.querySelector('[name="method"]');
   const field=modal.querySelector('#transaction-field');
