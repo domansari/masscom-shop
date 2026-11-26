@@ -26,6 +26,7 @@ const table = (headers,rows) => rows.length ? '<div class="table"><table><thead>
 let ledger, month, clock;
 let marketFilter = '';
 let tenantListMarket = '';
+let rentTenantMarket = '';
 const shop = id => ledger.shops.find(s=>s.id===id);
 const marketOf = s => ledger.markets.find(m=>m.id===s.market_id);
 const shopNumber = s => marketOf(s) ? s.code.slice(marketOf(s).prefix.length+1) : s.code;
@@ -225,13 +226,15 @@ function render(error = '') {
       l.end_month ? showMonth(l.end_month) : 'जारी',tenancyPayments(receiptsByLease.get(l.id) || []),'<a class="button" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
     ]));
   } else if (route === 'rent') {
-    const allocated = new Set(ledger.leases.map(l=>l.tenant_id));
+    const allocated = new Set(ledger.leases.filter(l=>!rentTenantMarket ||
+      (shop(l.shop_id)?.market_id || 'unassigned')===rentTenantMarket).map(l=>l.tenant_id));
     const tenantOptions = ledger.tenants.filter(t=>allocated.has(t.id)).map(t=>
       '<option value="'+escape(t.id)+'">'+escape(t.name+(t.phone?' · '+formatMobile(t.phone):''))+'</option>'
     ).join('');
-    body = '<form id="rent-tenant-form"><label>किरायेदार चुनें<select name="tenant_id" required>'+
+    body = '<form id="rent-tenant-form"><label>मार्केट चुनें<select id="rent-tenant-market">'+
+      marketOptions(rentTenantMarket,true)+'</select></label><label>किरायेदार चुनें<select name="tenant_id" required>'+
       '<option value="">किरायेदार चुनें</option>'+tenantOptions+'</select></label>'+
-      '<div><button class="primary" type="submit">सभी दुकानों का किराया एक साथ जमा करें</button></div></form>'+
+      '<div><button class="primary" type="submit">किराया जमा करें</button></div></form>'+
       '<hr>'+toolbar('मासिक किराया',marketPicker()+'<label>किराये का महीना<input id="month" type="month" value="'+escape(month)+'" required></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
@@ -302,6 +305,11 @@ function render(error = '') {
     return;
   }
   root.innerHTML = '<div class="toolbar"><a class="button" href="#dashboard">← डैशबोर्ड</a></div><section class="panel">'+body+'</section>';
+  document.querySelector('#rent-tenant-market')?.addEventListener('change',event=>{
+    rentTenantMarket=event.target.value;
+    render();
+    document.querySelector('#rent-tenant-market')?.focus();
+  });
   document.querySelector('#rent-tenant-form')?.addEventListener('submit',event=>{
     event.preventDefault();
     openTenantPayment('tenant-payment',new FormData(event.currentTarget).get('tenant_id'));
