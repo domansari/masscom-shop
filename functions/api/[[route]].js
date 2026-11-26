@@ -91,7 +91,7 @@ export async function onRequest({request,env}) {
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT * FROM markets ORDER BY rowid'),
-        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo FROM tenants ORDER BY name COLLATE NOCASE')
+        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
@@ -187,10 +187,25 @@ export async function onRequest({request,env}) {
       if (!result.meta.changes) return send({error:duplicateTenant},409);
       return send({ok:true});
     }
+    if (method === 'POST' && route === 'tenant-status') {
+      const tenantId=text(data.id);
+      const active=data.is_active===1 || data.is_active==='1' ? 1 :
+        data.is_active===0 || data.is_active==='0' ? 0 : null;
+      if (!tenantId || active===null) return send({error:'किरायेदार की स्थिति सही चुनें।'},400);
+      const tenant=await db.prepare('SELECT id FROM tenants WHERE id=?').bind(tenantId).first();
+      if (!tenant) return send({error:'किरायेदार नहीं मिला।'},404);
+      if (!active) {
+        const openLease=await db.prepare('SELECT 1 FROM leases WHERE tenant_id=? AND (end_month IS NULL OR end_month>=?) LIMIT 1')
+          .bind(tenantId,day().slice(0,7)).first();
+        if (openLease) return send({error:'पहले इस किरायेदार की सभी चालू और आगे की किरायेदारियाँ समाप्त करें।'},409);
+      }
+      await db.prepare('UPDATE tenants SET is_active=? WHERE id=?').bind(active,tenantId).run();
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'edit-allocation') {
       const {rent,opening,deposit} = data;
       const shopId = text(data.shop_id,120);
-      const allocation = await db.prepare('SELECT id,shop_id,start_month FROM leases WHERE id=? AND end_month IS NULL')
+      const allocation = await db.prepare('SELECT id,shop_id,start_month,deposit,deposit_receipt_number,deposit_paid_on FROM leases WHERE id=? AND end_month IS NULL')
         .bind(text(data.id)).first();
       if (!allocation) return send({error:'यह आवंटन अब संशोधित नहीं किया जा सकता।'},409);
       if (!shopId || !validAmount(rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
@@ -204,7 +219,13 @@ export async function onRequest({request,env}) {
           .bind(shopId,allocation.id,allocation.start_month).first();
         if (conflict) return send({error:'यह दुकान किसी दूसरी किरायेदारी में आवंटित है। खाली दुकान चुनें।'},409);
       }
-      const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?
+      const depositReceiptNumber = deposit>0
+        ? allocation.deposit_receipt_number || (allocation.deposit===0 ? 'SD-'+crypto.randomUUID().toUpperCase() : null)
+        : null;
+      const depositPaidOn = deposit>0
+        ? allocation.deposit_paid_on || (allocation.deposit===0 ? day() : null)
+        : null;
+      const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?, deposit_receipt_number=?, deposit_paid_on=?
         WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
           AND (shop_id=? OR NOT EXISTS (
             SELECT 1 FROM leases AS other WHERE other.shop_id=? AND other.id<>leases.id
@@ -213,7 +234,7 @@ export async function onRequest({request,env}) {
           AND NOT EXISTS (
             SELECT 1 FROM payments WHERE lease_id=leases.id GROUP BY month
             HAVING SUM(amount)>CASE WHEN month='opening' THEN ? ELSE ? END
-          )`).bind(shopId,rent,opening,deposit,text(data.id),deposit,shopId,shopId,opening,rent).run();
+          )`).bind(shopId,rent,opening,deposit,depositReceiptNumber,depositPaidOn,text(data.id),deposit,shopId,shopId,opening,rent).run();
       if (!result.meta.changes) return send({error:'आवंटन बंद है, दुकान उपलब्ध नहीं है, राशि दर्ज भुगतान से कम है या सुरक्षा राशि पहले ही लौटाई जा चुकी है।'},409);
       return send({ok:true});
     }
@@ -225,24 +246,26 @@ export async function onRequest({request,env}) {
       if (typeof startMonth !== 'string' || !monthValid(startMonth) || startMonth < day().slice(0,7)) {
         return send({error:'किराया शुरू होने के लिए इस महीने या आगे का कोई महीना चुनें।'},400);
       }
-      if (!tenant || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+      if (!tenant || tenant.is_active!==1 || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
         return send({error:'किरायेदार चुनें और किराया, पिछला बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
       const shopIds = data.shop_ids ?? [data.shop_id];
       if (!Array.isArray(shopIds) || !shopIds.length || shopIds.length>127 ||
           shopIds.some(id=>typeof id!=='string' || !id || id.length>120) ||
           new Set(shopIds).size!==shopIds.length) return send({error:'कम से कम एक सही दुकान चुनें।'},400);
-      const requested = shopIds.map(shop_id=>({id:crypto.randomUUID(),shop_id}));
+      const requested = shopIds.map(shop_id=>({id:crypto.randomUUID(),shop_id,
+        deposit_receipt_number:deposit>0?'SD-'+crypto.randomUUID().toUpperCase():null}));
       const result = await db.prepare(`WITH requested AS (
-        SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.shop_id') AS shop_id FROM json_each(?)
+        SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.shop_id') AS shop_id,
+          json_extract(value,'$.deposit_receipt_number') AS deposit_receipt_number FROM json_each(?)
       ), available AS (
         SELECT requested.* FROM requested JOIN shops ON shops.id=requested.shop_id
         WHERE shops.is_blocked=0
           AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
-      ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit)
-      SELECT id,shop_id,?,?,?,?,?,?,? FROM available
+      ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit,deposit_receipt_number,deposit_paid_on)
+      SELECT id,shop_id,?,?,?,?,?,?,?,deposit_receipt_number,? FROM available
       WHERE (SELECT count(*) FROM available)=(SELECT count(*) FROM requested)`)
-        .bind(JSON.stringify(requested),startMonth,tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit).run();
+        .bind(JSON.stringify(requested),startMonth,tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit,deposit>0?day():null).run();
       if (!result.meta.changes) return send({error:'चुनी गई किसी दुकान का इस महीने से आवंटन उपलब्ध नहीं है। दुकानें दोबारा चुनें।'},409);
       return send({ok:true});
     }
