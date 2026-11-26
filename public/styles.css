@@ -54,4 +54,4 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 .occupancy-content li{display:flex;align-items:center;gap:8px}
 .occupancy-content li strong{margin-inline-start:auto}
 .occupancy-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-.occupancy-dot-0{background:#34d399}.occupancy-dot-1{background:#60a5fa}.occupancy-dot-2{background:#fbbf24}
+.occupancy-dot-0{background:#a78bfa}.occupancy-dot-1{background:#34d399}.occupancy-dot-2{background:#60a5fa}.occupancy-dot-3{background:#fb7185}.occupancy-dot-4{background:#fbbf24}
