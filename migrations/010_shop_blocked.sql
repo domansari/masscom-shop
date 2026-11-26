@@ -1,0 +1,1 @@
+ALTER TABLE shops ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0 CHECK (is_blocked IN (0,1));
