@@ -4,6 +4,26 @@ const formatTenantId = value => (value || '').replace(/^([0-9]{4})([0-9]{4})([0-
 const root = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const logout = document.querySelector('#logout');
+const topButton = document.createElement('button');
+topButton.id = 'back-to-top';
+topButton.type = 'button';
+topButton.setAttribute('aria-label','ऊपर जाएँ');
+topButton.title = 'ऊपर जाएँ';
+topButton.textContent = '↑';
+document.body.append(topButton);
+const updateTopButton = () => {
+  const isLongPage = document.documentElement.scrollHeight > window.innerHeight + 240;
+  topButton.classList.toggle('is-visible', isLongPage && window.scrollY > 240);
+};
+window.addEventListener('scroll',updateTopButton,{passive:true});
+window.addEventListener('resize',updateTopButton);
+topButton.addEventListener('click',()=>{
+  window.scrollTo({
+    top:0,
+    behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'
+  });
+});
+new MutationObserver(updateTopButton).observe(root,{childList:true,subtree:true});
 const methods = {Cash:'नकद',UPI:'यूपीआई','Bank Transfer':'बैंक ट्रांसफ़र',Cheque:'चेक'};
 const shortDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',day:'numeric',month:'short',year:'numeric'});
 const monthDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',month:'long',year:'numeric'});
