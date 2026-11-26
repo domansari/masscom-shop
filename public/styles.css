@@ -74,3 +74,22 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 #back-to-top:focus-visible{outline:2px solid #a5f3fc;outline-offset:3px}
 @media(max-width:560px){#back-to-top{right:14px;bottom:14px;width:44px;height:44px}}
 @media(prefers-reduced-motion:reduce){#back-to-top{transition:none}}
+
+
+/* Tenant and shop list actions */
+.action-details,.action-shops{
+  color:#fff;background:#2563eb;border-color:#93c5fd;font-weight:600
+}
+.action-details:hover,.action-shops:hover{background:#1d4ed8;border-color:#bfdbfe}
+.action-assign{
+  color:#052e16;background:#4ade80;border-color:#86efac;font-weight:600
+}
+.action-assign:hover{color:#052e16;background:#86efac;border-color:#bbf7d0}
+.action-edit{
+  color:#422006;background:#facc15;border-color:#fde68a;font-weight:600
+}
+.action-edit:hover{color:#422006;background:#fde047;border-color:#fef08a}
+.action-pay{
+  color:#fff;background:#16a34a;border-color:#86efac;font-weight:700
+}
+.action-pay:hover{background:#15803d;border-color:#bbf7d0}
