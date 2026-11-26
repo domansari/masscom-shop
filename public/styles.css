@@ -45,4 +45,4 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 .catalog-tabs strong{margin-inline-start:3px;color:#a5f3fc}
 @media(max-width:760px){.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
-.dashboard-logo{width:clamp(62px,12vw,132px);height:auto;flex:none;object-fit:contain}
+.dashboard-logo{width:clamp(62px,12vw,132px);height:auto;flex:none;object-fit:contain;mix-blend-mode:screen}
