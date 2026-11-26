@@ -318,7 +318,6 @@ function render(error = '') {
     const rented = rentable.filter(s=>occupied(s.id)).length;
     const reserved = rentable.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
     const monthRent = rentRows(current);
-    const oldPaid = ledger.payments.filter(p=>p.month==='opening' || p.month<current).reduce((sum,p)=>sum+p.amount,0);
     const advance = ledger.payments.filter(p=>p.month!=='opening' && p.month>current).reduce((sum,p)=>sum+p.amount,0);
     const counts = new Intl.NumberFormat('hi-IN');
     const charts = chartPanel('मार्केट और दुकानें · '+counts.format(ledger.markets.length)+' मार्केट',[
@@ -329,10 +328,10 @@ function render(error = '') {
       ['किराया जमा',monthRent.reduce((sum,row)=>sum+row.paid,0),'#34d399'],
       ['किराया बाकी',monthRent.reduce((sum,row)=>sum+row.balance,0),'#fb7185']
     ],money) +
-    chartPanel('पुराना बकाया और एडवांस',[
-      ['पुराने महीनों का जमा',oldPaid,'#a78bfa'],['पुराना बकाया बाकी',Math.max(0,overdue()),'#fb7185'],
-      ['आने वाले महीनों का एडवांस',advance,'#60a5fa']
-    ],money,true);
+    chartPanel('बकाया और एडवांस',[
+      ['कुल बकाया',Math.max(0,overdue()),'#fb7185'],
+      ['कुल एडवांस',advance,'#60a5fa']
+    ],money);
     const cards = [['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
     root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
