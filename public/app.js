@@ -37,7 +37,7 @@ const lease = id => ledger.leases.find(l=>l.id===id);
 const includesMonth = (l,m) => l.start_month <= m && (!l.end_month || l.end_month >= m);
 const action = (name,id,label) => '<button type="button" data-action="'+name+'" data-id="'+escape(id)+'">'+label+'</button>';
 const dateFormat = new Intl.DateTimeFormat('hi-IN',{timeZone:'Asia/Kolkata',dateStyle:'full'});
-const clockFormat = new Intl.DateTimeFormat('hi-IN',{timeZone:'Asia/Kolkata',timeStyle:'medium',hourCycle:'h23'});
+const clockFormat = new Intl.DateTimeFormat('hi-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',numberingSystem:'latn'});
 
 async function api(route,data) {
   const response = await fetch('/api/'+route,data === undefined ? {} : {
@@ -156,14 +156,33 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const cards = [['मार्केट',ledger.markets.length+' मार्केट · '+ledger.shops.length+' दुकानें','▦','markets'],['दुकानें','दुकान नंबर और पते का रिकॉर्ड','⌂','shops'],['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
+    const cards = [['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
-    root.innerHTML = '<div class="hero"><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
+    root.innerHTML = '<div class="hero dashboard-hero"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
+      '<div class="dashboard-clock"><svg viewBox="0 0 80 80" aria-hidden="true"><circle class="clock-face" cx="40" cy="40" r="37"/>'+
+      Array.from({length:12},(_,i)=>'<line class="clock-tick" x1="40" y1="8" x2="40" y2="'+(i%3===0?14:11)+'" transform="rotate('+i*30+' 40 40)"/>').join('')+
+      '<line id="clock-hour" class="clock-hour" x1="40" y1="40" x2="40" y2="22"/>'+
+      '<line id="clock-minute" class="clock-minute" x1="40" y1="40" x2="40" y2="15"/>'+
+      '<line id="clock-second" class="clock-second" x1="40" y1="46" x2="40" y2="13"/>'+
+      '<circle class="clock-pin" cx="40" cy="40" r="3"/></svg><time id="date"></time></div></div>'+
       '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
-      '<div class="grid">'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
-      '<section class="card"><span class="icon" aria-hidden="true">◷</span><h2>डिजिटल घड़ी</h2><time id="clock"></time><p id="date"></p></section></div>';
-    const tick = ()=>{const now=new Date();document.querySelector('#clock').textContent=clockFormat.format(now);document.querySelector('#date').textContent=dateFormat.format(now);};
+      '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
+      '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
+      '<a class="button" href="#shops">दुकानें <strong>'+ledger.shops.length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
+      '</div>';
+    const hands = ['hour','minute','second'].map(name=>document.querySelector('#clock-'+name));
+    const date = document.querySelector('#date');
+    const tick = ()=>{
+      const now = new Date();
+      const parts = Object.fromEntries(clockFormat.formatToParts(now).map(({type,value})=>[type,Number(value)]));
+      const {hour,minute,second} = parts;
+      const angles = [hour*30+minute/2,minute*6+second/10,second*6];
+      hands.forEach((hand,i)=>hand.setAttribute('transform','rotate('+angles[i]+' 40 40)'));
+      date.textContent = dateFormat.format(now);
+      date.dateTime = now.toISOString();
+      date.title = clockFormat.format(now)+' IST';
+    };
     tick();
     clock = setInterval(tick,1000);
     return;
