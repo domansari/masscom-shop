@@ -155,6 +155,10 @@ export async function onRequest({request,env}) {
       return send({ok:true});
     }
     if (method === 'POST' && route === 'payments') {
+      const receiptNumber = typeof data.receipt_number==='string' ? data.receipt_number.trim() : '';
+      if (!receiptNumber || receiptNumber.length>60) {
+        return send({error:'रसीद नंबर दर्ज करें (अधिकतम 60 अक्षर)।'},400);
+      }
       const transactionId = typeof data.transaction_id==='string' ? data.transaction_id.trim() : '';
       if (data.method==='UPI' && (!transactionId || transactionId.length>100)) {
         return send({error:'यूपीआई भुगतान के लिए ट्रांज़ैक्शन आईडी दर्ज करें (अधिकतम 100 अक्षर)।'},400);
@@ -165,10 +169,10 @@ export async function onRequest({request,env}) {
         return send({error:'सही राशि, भुगतान की तारीख और तरीका दर्ज करें।'},400);
       }
       if (await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) return send({ok:true});
-      const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on,transaction_id)
-        SELECT ?,id,?,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
+      const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on,transaction_id,receipt_number)
+        SELECT ?,id,?,?,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
         AND (CASE WHEN ?='opening' THEN opening ELSE rent END) - COALESCE((SELECT SUM(amount) FROM payments WHERE lease_id=leases.id AND month=?),0)>=?
-        ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,data.method==='UPI'?transactionId:null,
+        ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,data.method==='UPI'?transactionId:null,receiptNumber,
           data.lease_id,data.month,data.month,data.month,data.month,data.month,data.amount).run();
       if (!result.meta.changes && !await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) {
         return send({error:'राशि बाकी किराये से अधिक है या चुना हुआ महीना किरायेदारी की अवधि से बाहर है।'},409);
@@ -178,6 +182,9 @@ export async function onRequest({request,env}) {
     return send({error:'पेज नहीं मिला।'},404);
   } catch (error) {
     if (String(error).includes('UNIQUE constraint failed: shops.code')) return send({error:'यह दुकान नंबर पहले से दर्ज है।'},409);
+    if (/UNIQUE constraint failed: payments\.receipt_number|payments_receipt_number_unique/.test(String(error))) {
+      return send({error:'यह रसीद नंबर पहले से दर्ज है। दूसरा नंबर डालें।'},409);
+    }
     console.error('Shop API request failed', route, error.name);
     return send({error:'काम पूरा नहीं हो सका। कृपया फिर कोशिश करें।'},500);
   }

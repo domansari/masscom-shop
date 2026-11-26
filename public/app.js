@@ -143,9 +143,9 @@ function render(error = '') {
         balance>0?action('opening-payment',l.id,'बकाया जमा करें'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
-    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी',''],ledger.payments.filter(p=>inMarket(shop(lease(p.lease_id).shop_id))).map(p=>[
+    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],ledger.payments.filter(p=>inMarket(shop(lease(p.lease_id).shop_id))).map(p=>[
       showDate(p.paid_on),escape(shopLabel(shop(lease(p.lease_id).shop_id))),escape(lease(p.lease_id).tenant),
-      paymentPeriod(p),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),action('print',p.id,'प्रिंट करें')
+      paymentPeriod(p),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('print',p.id,'प्रिंट करें')
     ]));
   } else {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
@@ -251,6 +251,7 @@ root.addEventListener('click',event=>{
     const paymentId=crypto.randomUUID();
     dialog(opening?'शुरुआती बकाया जमा करें':'किराया जमा करें','<p>'+escape(shopLabel(shop(lease(id).shop_id)))+' · '+escape(lease(id).tenant)+' · '+(opening?'शुरुआती बकाया':showMonth(month))+'</p>'+
       '<label>राशि (₹)<input type="number" step=".01" min=".01" max="'+balance+'" value="'+balance+'" name="amount" required></label>'+
+      '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
       '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
       '<label>भुगतान का तरीका<select name="method"><option value="Cash">नकद</option><option value="UPI">यूपीआई</option></select></label>'+
       '<label id="transaction-field" hidden>यूपीआई ट्रांज़ैक्शन आईडी<input name="transaction_id" maxlength="100" disabled></label>',
@@ -268,8 +269,8 @@ root.addEventListener('click',event=>{
   if (name==='print') {
     const p=ledger.payments.find(item=>item.id===id);
     const l=lease(p.lease_id);
-    document.querySelector('#print').innerHTML='<h1>किराये की रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p><p>रसीद क्रमांक '+escape(p.id)+
-      '</p><hr><p>दुकान '+escape(shopLabel(shop(l.shop_id)))+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p><p>किराये का महीना '+paymentPeriod(p)+
+    document.querySelector('#print').innerHTML='<h1>किराये की रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p><p>ऐप रसीद आईडी '+escape(p.id)+
+      '</p>'+(p.receipt_number?'<p>रसीद नंबर '+escape(p.receipt_number)+'</p>':'')+'<hr><p>दुकान '+escape(shopLabel(shop(l.shop_id)))+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p><p>किराये का महीना '+paymentPeriod(p)+
       '</p><p>भुगतान की तारीख '+showDate(p.paid_on)+'</p><p>भुगतान का तरीका '+escape(methods[p.method])+'</p>'+(p.transaction_id?'<p>यूपीआई ट्रांज़ैक्शन आईडी '+escape(p.transaction_id)+'</p>':'')+'<h2>'+money(p.amount)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
     window.print();
   }
