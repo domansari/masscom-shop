@@ -29,7 +29,7 @@ export async function onRequest({request,env}) {
   const route = url.pathname.slice(5);
   const method = request.method;
   const db = env.SHOP_DB;
-  if (!db || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 20) return send({error:'Cloudflare setup is pending.'},503);
+  if (!db || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8 || env.ADMIN_PASSWORD.length > 20) return send({error:'Cloudflare setup is pending.'},503);
   if (method !== 'GET' && (method !== 'POST' || request.headers.get('Origin') !== url.origin)) {
     return send({error:'Request blocked.'},403);
   }
@@ -40,8 +40,23 @@ export async function onRequest({request,env}) {
       if (!data || typeof data !== 'object') return send({error:'Invalid request.'},400);
     }
     if (method === 'POST' && route === 'login') {
-      if (typeof data.password !== 'string' || data.password.length > 512 ||
-          !await matches(data.password,env.ADMIN_PASSWORD)) return send({error:'Incorrect password.'},401);
+      if (typeof data.password !== 'string' || data.password.length < 8 || data.password.length > 20) {
+        return send({error:'Enter a password of 8–20 characters.'},400);
+      }
+      await db.prepare('CREATE TABLE IF NOT EXISTS login_attempts (client TEXT PRIMARY KEY, expires INTEGER NOT NULL, attempts INTEGER NOT NULL)').run();
+      const client = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const time = Date.now();
+      const attempt = await db.prepare(`INSERT INTO login_attempts VALUES (?, ?, 1)
+        ON CONFLICT(client) DO UPDATE SET
+        attempts=CASE WHEN expires<=? THEN 1 ELSE attempts+1 END,
+        expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END
+        WHERE expires<=? OR attempts<10
+        RETURNING attempts`).bind(client,time+900000,time,time,time).first();
+      if (!attempt) return send({error:'Too many attempts. Try again in 15 minutes.'},429);
+      if (!await matches(data.password,env.ADMIN_PASSWORD)) {
+        return send({error:'Incorrect password.'},401);
+      }
+      await db.prepare('DELETE FROM login_attempts WHERE client=? OR expires<=?').bind(client,time).run();
       const id = crypto.randomUUID();
       const now = Date.now();
       await db.batch([

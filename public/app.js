@@ -56,7 +56,7 @@ function render(error = '') {
   clearInterval(clock);
   logout.hidden = !ledger;
   if (!ledger) {
-    root.innerHTML = '<section class="login panel"><h1>Admin Sign In</h1><form id="login"><label>Password<input type="password" name="password" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">Sign In</button></form></section>';
+    root.innerHTML = '<section class="login panel"><h1>Admin Sign In</h1><form id="login"><label>Password<input type="password" name="password" minlength="8" maxlength="20" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">Sign In</button></form></section>';
     document.querySelector('#login').addEventListener('submit',e=>submit(e,async d=>{await api('login',d);await load();}));
     return;
   }
