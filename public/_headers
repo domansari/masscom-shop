@@ -1,0 +1,5 @@
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Content-Security-Policy: default-src 'self'; img-src 'self' https://www.masscom.co.in https://certificate.masscom.co.in; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com https://www.masscom.co.in; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
