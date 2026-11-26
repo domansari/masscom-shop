@@ -82,13 +82,13 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 }
 .action-details:hover,.action-shops:hover{background:#1d4ed8;border-color:#bfdbfe}
 .action-assign{
-  color:#052e16;background:#4ade80;border-color:#86efac;font-weight:600
+  color:#fff;background:#800020;border-color:#c08497;font-weight:600
 }
-.action-assign:hover{color:#052e16;background:#86efac;border-color:#bbf7d0}
+.action-assign:hover{color:#fff;background:#660019;border-color:#e0a5b5}
 .action-edit{
-  color:#422006;background:#facc15;border-color:#fde68a;font-weight:600
+  color:#fff;background:#d000a8;border-color:#f0a3df;font-weight:600
 }
-.action-edit:hover{color:#422006;background:#fde047;border-color:#fef08a}
+.action-edit:hover{color:#fff;background:#ad008b;border-color:#f7c3eb}
 .action-pay{
   color:#fff;background:#16a34a;border-color:#86efac;font-weight:700
 }
