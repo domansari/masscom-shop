@@ -207,7 +207,8 @@ function render(error = '') {
         currentLease ? action('payment',currentLease.id,'किराया जमा करें') : '';
       return [escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
         allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
-        '<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')+' '+pay];
+        '<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')+
+        (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें'):'')+' '+pay];
     })) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
       l.end_month ? showMonth(l.end_month) : 'जारी',tenancyPayments(receiptsByLease.get(l.id) || []),'<a class="button" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
@@ -373,6 +374,25 @@ root.addEventListener('click',event=>{
     dialog(s?'दुकान संपादित करें':'दुकान जोड़ें','<label>मार्केट<select name="market_id">'+marketOptions(s?.market_id || (!s && marketFilter !== 'unassigned' ? marketFilter : ''))+'</select></label>'+
       '<label>दुकान का नंबर या नाम<input name="code" maxlength="40" required value="'+escape(s ? shopNumber(s) : '')+'"></label>'+
       '<label>पता<input name="address" maxlength="240" value="'+escape(s?.address)+'"></label>','shops',d=>({...d,id}));
+  }
+  if (name==='edit-allocation') {
+    const allocations = ledger.leases.filter(l=>l.tenant_id===id && !l.end_month);
+    if (!allocations.length) return;
+    dialog('आवंटन संशोधित करें','<label>आवंटित दुकान<select name="id" required>'+
+      allocations.map(l=>'<option value="'+escape(l.id)+'">'+escape(shopLabel(shop(l.shop_id)))+'</option>').join('')+
+      '</select></label>'+
+      '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
+      '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" required></label>'+
+      '<label>सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" required></label>',
+      'edit-allocation',d=>({id:d.id,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+    const form = modal.querySelector('form');
+    const picker = form.elements.namedItem('id');
+    const populate = ()=>{
+      const allocation = lease(picker.value);
+      for (const field of ['rent','opening','deposit']) form.elements.namedItem(field).value=allocation[field]/100;
+    };
+    picker.addEventListener('change',populate);
+    populate();
   }
   if (name==='lease') {
     const options=ledger.shops.filter(s=>!ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
