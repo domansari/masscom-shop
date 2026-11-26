@@ -6,6 +6,14 @@ const shortDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',day:'numeric',
 const monthDate = new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',month:'long',year:'numeric'});
 const showDate = value => shortDate.format(new Date(value));
 const showMonth = value => monthDate.format(new Date(value+'-01'));
+function startMonthOptions(today) {
+  const [year, month] = today.split('-').map(Number);
+  return Array.from({length:60}, (_, offset)=>{
+    const date = new Date(Date.UTC(year,month-1+offset,1));
+    const value = date.toISOString().slice(0,7);
+    return '<option value="'+value+'">'+showMonth(value)+'</option>';
+  }).join('');
+}
 const money = amount => (amount/100).toLocaleString('hi-IN',{style:'currency',currency:'INR'});
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const table = (headers,rows) => rows.length ? '<div class="table"><table><thead><tr>'+
@@ -210,7 +218,8 @@ root.addEventListener('click',event=>{
       options.map(s=>'<option value="'+escape(s.id)+'">'+escape(shopLabel(s))+'</option>').join('')+'</select></label>'+
 
       '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
-      '<label>किराया शुरू होने का महीना<input type="month" name="start_month" min="'+ledger.today.slice(0,7)+'" required></label>'+
+      '<label>किराया शुरू होने का महीना<select name="start_month" required><option value="">महीना चुनें</option>'+
+      startMonthOptions(ledger.today)+'</select></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
       '<label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
       'leases',d=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
