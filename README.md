@@ -4,7 +4,7 @@ Cloudflare Pages app for shop records, tenancy history, monthly rent, partial pa
 
 ## Cloudflare setup
 
-1. Create a separate D1 database named `masscom-shop-rent` and apply `schema.sql`.
+1. Create a separate D1 database named `masscom-shop-rent` and apply `schema.sql` followed by `migrations/001_markets_and_tenants.sql`.
 2. Create a Pages project named `masscom-shop` with GitHub repository `domansari/masscom-shop`, production branch `main`, no framework or build command, and output directory `public`.
 3. In the Pages project, add the D1 binding `SHOP_DB` pointing to `masscom-shop-rent`. Add a production secret named `ADMIN_PASSWORD` with a randomly generated password of 8–20 characters. Redeploy after changing settings.
 4. Open the Pages URL, sign in, and check the empty ledger. Add `shop.masscom.co.in` under the Pages project's Custom Domains.

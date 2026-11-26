@@ -74,32 +74,46 @@ export async function onRequest({request,env}) {
       return send({ok:true},200,'');
     }
     if (method === 'GET' && route === 'ledger') {
-      const [shops, leases, payments] = await db.batch([
+      const [shops, leases, payments, markets, tenants] = await db.batch([
         db.prepare('SELECT * FROM shops ORDER BY code COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
-        db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC')
+        db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
+        db.prepare('SELECT * FROM markets ORDER BY rowid'),
+        db.prepare('SELECT * FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
-      return send({shops:shops.results, leases:leases.results, payments:payments.results, today:day()});
+      return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
     if (method === 'POST' && route === 'shops') {
-      const code = text(data.code,40);
+      const number = text(data.code,40);
+      const selectedMarket = data.market_id
+        ? await db.prepare('SELECT * FROM markets WHERE id=?').bind(data.market_id).first()
+        : null;
+      if (data.market_id && !selectedMarket) return send({error:'सही मार्केट चुनें।'},400);
+      const code = selectedMarket && number ? selectedMarket.prefix+'-'+number : number;
       if (!code) return send({error:'दुकान का नंबर या नाम दर्ज करें।'},400);
       if (data.id) {
-        await db.prepare('UPDATE shops SET code=?, address=? WHERE id=?').bind(code,text(data.address,240),data.id).run();
+        await db.prepare('UPDATE shops SET code=?, address=?, market_id=? WHERE id=?').bind(code,text(data.address,240),selectedMarket?.id ?? null,data.id).run();
       } else {
-        await db.prepare('INSERT INTO shops VALUES (?,?,?)').bind(crypto.randomUUID(),code,text(data.address,240)).run();
+        await db.prepare('INSERT INTO shops (id,code,address,market_id) VALUES (?,?,?,?)').bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null).run();
       }
       return send({ok:true});
     }
+    if (method === 'POST' && route === 'tenants') {
+      const name = text(data.name);
+      if (!name) return send({error:'किरायेदार का नाम दर्ज करें।'},400);
+      await db.prepare('INSERT INTO tenants VALUES (?,?,?)')
+        .bind(crypto.randomUUID(),name,text(data.phone,32)).run();
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'leases') {
-      const tenant = text(data.tenant);
+      const tenant = await db.prepare('SELECT * FROM tenants WHERE id=?').bind(text(data.tenant_id)).first();
       if (!tenant || !monthValid(data.start_month) || !validAmount(data.rent)) {
         return send({error:'किरायेदार का नाम, शुरुआती महीना और सही किराया दर्ज करें।'},400);
       }
-      const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month)
-        SELECT ?,id,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
+      const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id)
+        SELECT ?,id,?,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
           SELECT 1 FROM leases WHERE shop_id=shops.id AND (end_month IS NULL OR end_month>=?)
-        )`).bind(crypto.randomUUID(),tenant,text(data.phone,32),data.rent,data.start_month,data.shop_id,data.start_month).run();
+        )`).bind(crypto.randomUUID(),tenant.name,tenant.phone,data.rent,data.start_month,tenant.id,data.shop_id,data.start_month).run();
       if (!result.meta.changes) return send({error:'इस दुकान के लिए उस महीने से किरायेदारी पहले से दर्ज है।'},409);
       return send({ok:true});
     }

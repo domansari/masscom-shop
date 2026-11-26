@@ -13,7 +13,17 @@ const table = (headers,rows) => rows.length ? '<div class="table"><table><thead>
   rows.map(cells=>'<tr>'+cells.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>' :
   '<p>अभी कोई रिकॉर्ड नहीं है।</p>';
 let ledger, month, clock;
+let marketFilter = '';
 const shop = id => ledger.shops.find(s=>s.id===id);
+const marketOf = s => ledger.markets.find(m=>m.id===s.market_id);
+const shopNumber = s => marketOf(s) ? s.code.slice(marketOf(s).prefix.length+1) : s.code;
+const shopLabel = s => marketOf(s) ? marketOf(s).name+' · '+shopNumber(s) : s.code;
+const inMarket = s => !marketFilter || (s.market_id || 'unassigned') === marketFilter;
+const marketOptions = (selected, filter=false) =>
+  '<option value="">'+(filter?'सभी मार्केट':'मार्केट नहीं चुना')+'</option>'+
+  (filter && ledger.shops.some(s=>!s.market_id)?'<option value="unassigned"'+(selected==='unassigned'?' selected':'')+'>बिना मार्केट</option>':'')+
+  ledger.markets.map(m=>'<option value="'+escape(m.id)+'"'+(m.id===selected?' selected':'')+'>'+escape(m.name)+'</option>').join('');
+const marketPicker = () => '<label>मार्केट<select id="market-filter">'+marketOptions(marketFilter,true)+'</select></label>';
 const lease = id => ledger.leases.find(l=>l.id===id);
 const includesMonth = (l,m) => l.start_month <= m && (!l.end_month || l.end_month >= m);
 const action = (name,id,label) => '<button type="button" data-action="'+name+'" data-id="'+escape(id)+'">'+label+'</button>';
@@ -68,33 +78,44 @@ function render(error = '') {
   const route = location.hash.slice(1);
   const toolbar = (title,tools='')=>'<div class="toolbar"><h2>'+title+'</h2><div>'+tools+'</div></div>';
   let body;
-  if (route === 'shops') {
-    body = toolbar('दुकानें',action('shop','','दुकान जोड़ें')) + table(['दुकान','पता','स्थिति',''],ledger.shops.map(s=>[
-      escape(s.code),escape(s.address),ledger.leases.some(l=>l.shop_id===s.id && includesMonth(l,ledger.today.slice(0,7)))?'किराये पर':'खाली',
+  const current = ledger.today.slice(0,7);
+  const occupied = id => ledger.leases.some(l=>l.shop_id===id && includesMonth(l,current));
+  if (route === 'markets') {
+    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','खाली',''],ledger.markets.map(m=>{
+      const shops = ledger.shops.filter(s=>s.market_id===m.id);
+      const rented = shops.filter(s=>occupied(s.id)).length;
+      return [escape(m.name),shops.length,rented,shops.length-rented,action('open-market',m.id,'दुकानें देखें')];
+    }));
+  } else if (route === 'shops') {
+    body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],ledger.shops.filter(inMarket).map(s=>[
+      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),occupied(s.id)?'किराये पर':'खाली',
       action('shop',s.id,'संपादित करें')
     ]));
   } else if (route === 'tenants') {
-    body = toolbar('किरायेदारी',action('lease','','किरायेदारी जोड़ें')) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह',''],ledger.leases.map(l=>[
-      escape(shop(l.shop_id).code),escape(l.tenant),escape(l.phone),money(l.rent),showMonth(l.start_month),
+    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')) +
+    table(['किरायेदार','फ़ोन','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
+      escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && includesMonth(l,current))
+        .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—',action('lease',t.id,'दुकान आवंटित करें')
+    ])) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
+      escape(shopLabel(shop(l.shop_id))),escape(l.tenant),escape(l.phone),money(l.rent),showMonth(l.start_month),
       l.end_month ? showMonth(l.end_month) : 'जारी',l.end_month?'':action('end',l.id,'समाप्त करें')
     ]));
   } else if (route === 'rent') {
-    body = toolbar('मासिक किराया','<label>किराये का महीना<input id="month" type="month" value="'+escape(month)+'" required></label>') +
-      table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).map(({l,paid,balance})=>[
-        escape(shop(l.shop_id).code),escape(l.tenant),money(l.rent),money(paid),money(balance),
+    body = toolbar('मासिक किराया',marketPicker()+'<label>किराये का महीना<input id="month" type="month" value="'+escape(month)+'" required></label>') +
+      table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
+        escape(shopLabel(shop(l.shop_id))),escape(l.tenant),money(l.rent),money(paid),money(balance),
         balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
-    body = toolbar('किराये की रसीदें') + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका',''],ledger.payments.map(p=>[
-      showDate(p.paid_on),escape(shop(lease(p.lease_id).shop_id).code),escape(lease(p.lease_id).tenant),
+    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका',''],ledger.payments.filter(p=>inMarket(shop(lease(p.lease_id).shop_id))).map(p=>[
+      showDate(p.paid_on),escape(shopLabel(shop(lease(p.lease_id).shop_id))),escape(lease(p.lease_id).tenant),
       showMonth(p.month),money(p.amount),escape(methods[p.method]),action('print',p.id,'प्रिंट करें')
     ]));
   } else {
-    const current = ledger.today.slice(0,7);
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const cards = [['दुकानें','दुकान नंबर और पते का रिकॉर्ड','⌂','shops'],['किरायेदारी','किरायेदार और मासिक किराये का रिकॉर्ड','♙','tenants'],
+    const cards = [['मार्केट',ledger.markets.length+' मार्केट · '+ledger.shops.length+' दुकानें','▦','markets'],['दुकानें','दुकान नंबर और पते का रिकॉर्ड','⌂','shops'],['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
     root.innerHTML = '<div class="hero"><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
       '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
@@ -107,6 +128,7 @@ function render(error = '') {
     return;
   }
   root.innerHTML = '<div class="toolbar"><a class="button" href="#dashboard">← डैशबोर्ड</a></div><section class="panel">'+body+'</section>';
+  document.querySelector('#market-filter')?.addEventListener('change',event=>{marketFilter=event.target.value;render();});
   document.querySelector('#month')?.addEventListener('change',event=>{
     if (event.target.validity.valid && event.target.value) {month=event.target.value;render();}
   });
@@ -138,16 +160,27 @@ root.addEventListener('click',event=>{
   const button=event.target.closest('[data-action]');
   if (!button) return;
   const {action:name,id}=button.dataset;
+  if (name==='open-market') {
+    marketFilter=id;
+    location.hash='shops';
+  }
+  if (name==='tenant') {
+    dialog('किरायेदार जोड़ें','<label>किरायेदार का नाम<input name="name" maxlength="120" required></label>'+
+      '<label>फ़ोन<input name="phone" type="tel" maxlength="32"></label>','tenants',d=>d);
+  }
   if (name==='shop') {
     const s=shop(id);
-    dialog(s?'दुकान संपादित करें':'दुकान जोड़ें','<label>दुकान का नंबर या नाम<input name="code" maxlength="40" required value="'+escape(s?.code)+'"></label>'+
+    dialog(s?'दुकान संपादित करें':'दुकान जोड़ें','<label>मार्केट<select name="market_id">'+marketOptions(s?.market_id || (!s && marketFilter !== 'unassigned' ? marketFilter : ''))+'</select></label>'+
+      '<label>दुकान का नंबर या नाम<input name="code" maxlength="40" required value="'+escape(s ? shopNumber(s) : '')+'"></label>'+
       '<label>पता<input name="address" maxlength="240" value="'+escape(s?.address)+'"></label>','shops',d=>({...d,id}));
   }
   if (name==='lease') {
     const options=ledger.shops.filter(s=>!ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
-    dialog('किरायेदारी जोड़ें','<label>दुकान<select name="shop_id" required><option value="">दुकान चुनें</option>'+
-      options.map(s=>'<option value="'+s.id+'">'+escape(s.code)+'</option>').join('')+'</select></label>'+
-      '<label>किरायेदार का नाम<input name="tenant" maxlength="120" required></label><label>फ़ोन<input name="phone" type="tel" maxlength="32"></label>'+
+    dialog('दुकान आवंटित करें','<label>किरायेदार<select name="tenant_id" required><option value="">किरायेदार चुनें</option>'+
+      ledger.tenants.map(t=>'<option value="'+escape(t.id)+'"'+(t.id===id?' selected':'')+'>'+escape(t.name+(t.phone?' · '+t.phone:''))+'</option>').join('')+
+      '</select></label><label>दुकान<select name="shop_id" required><option value="">दुकान चुनें</option>'+
+      options.map(s=>'<option value="'+escape(s.id)+'">'+escape(shopLabel(s))+'</option>').join('')+'</select></label>'+
+
       '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
       '<label>किराया शुरू होने का महीना<input type="month" name="start_month" value="'+month+'" required></label>','leases',d=>({...d,rent:minor(d.rent)}));
   }
@@ -158,7 +191,7 @@ root.addEventListener('click',event=>{
   if (name==='payment') {
     const balance=rentRows(month).find(r=>r.l.id===id).balance/100;
     const paymentId=crypto.randomUUID();
-    dialog('किराया जमा करें','<p>'+escape(shop(lease(id).shop_id).code)+' · '+escape(lease(id).tenant)+' · '+showMonth(month)+'</p>'+
+    dialog('किराया जमा करें','<p>'+escape(shopLabel(shop(lease(id).shop_id)))+' · '+escape(lease(id).tenant)+' · '+showMonth(month)+'</p>'+
       '<label>राशि (₹)<input type="number" step=".01" min=".01" max="'+balance+'" value="'+balance+'" name="amount" required></label>'+
       '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
       '<label>भुगतान का तरीका<select name="method">'+Object.entries(methods).map(([value,label])=>'<option value="'+value+'">'+label+'</option>').join('')+'</select></label>',
@@ -168,7 +201,7 @@ root.addEventListener('click',event=>{
     const p=ledger.payments.find(item=>item.id===id);
     const l=lease(p.lease_id);
     document.querySelector('#print').innerHTML='<h1>किराये की रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p><p>रसीद क्रमांक '+escape(p.id)+
-      '</p><hr><p>दुकान '+escape(shop(l.shop_id).code)+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p><p>किराये का महीना '+showMonth(p.month)+
+      '</p><hr><p>दुकान '+escape(shopLabel(shop(l.shop_id)))+'</p><p>इनसे प्राप्त हुआ '+escape(l.tenant)+'</p><p>किराये का महीना '+showMonth(p.month)+
       '</p><p>भुगतान की तारीख '+showDate(p.paid_on)+'</p><p>भुगतान का तरीका '+escape(methods[p.method])+'</p><h2>'+money(p.amount)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
     window.print();
   }
