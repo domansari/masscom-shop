@@ -214,15 +214,26 @@ root.addEventListener('click',event=>{
     const options=ledger.shops.filter(s=>!ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
     dialog('दुकान आवंटित करें','<label>किरायेदार<select name="tenant_id" required><option value="">किरायेदार चुनें</option>'+
       ledger.tenants.map(t=>'<option value="'+escape(t.id)+'"'+(t.id===id?' selected':'')+'>'+escape(t.name+(t.phone?' · '+t.phone:''))+'</option>').join('')+
-      '</select></label><label>दुकान<select name="shop_id" required><option value="">दुकान चुनें</option>'+
-      options.map(s=>'<option value="'+escape(s.id)+'">'+escape(shopLabel(s))+'</option>').join('')+'</select></label>'+
+      '</select></label><label>मार्केट<select name="market_id" required><option value="">मार्केट चुनें</option>'+
+      ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
+      (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
+      '<label>दुकान<select name="shop_id" required><option value="">पहले मार्केट चुनें</option></select></label>'+
 
       '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
       '<label>किराया शुरू होने का महीना<select name="start_month" required><option value="">महीना चुनें</option>'+
       startMonthOptions(ledger.today)+'</select></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+
       '<label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" value="0"></label>',
-      'leases',d=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+      'leases',({market_id,...d})=>({...d,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
+    const marketSelect = modal.querySelector('[name="market_id"]');
+    const shopSelect = modal.querySelector('[name="shop_id"]');
+    marketSelect.addEventListener('change',()=>{
+      const selected = marketSelect.value;
+      const shops = options.filter(s=>(s.market_id || 'unassigned')===selected);
+      const prompt = !selected ? 'पहले मार्केट चुनें' : shops.length ? 'दुकान चुनें' : 'कोई दुकान उपलब्ध नहीं है';
+      shopSelect.replaceChildren(new Option(prompt,''));
+      for (const s of shops) shopSelect.add(new Option(shopNumber(s),s.id));
+    });
   }
   if (name==='return-deposit') {
     dialog('सुरक्षा राशि की वापसी','<p>वापस की गई राशि · '+money(lease(id).deposit)+'</p>'+
