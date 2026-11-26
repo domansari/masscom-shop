@@ -178,6 +178,20 @@ export async function onRequest({request,env}) {
       if (!result.meta.changes) return send({error:duplicateTenant},409);
       return send({ok:true});
     }
+    if (method === 'POST' && route === 'edit-allocation') {
+      const {rent,opening,deposit} = data;
+      if (!validAmount(rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+        return send({error:'किराया, शुरुआती बकाया और सुरक्षा राशि सही दर्ज करें।'},400);
+      }
+      const result = await db.prepare(`UPDATE leases SET rent=?, opening=?, deposit=?
+        WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
+          AND NOT EXISTS (
+            SELECT 1 FROM payments WHERE lease_id=leases.id GROUP BY month
+            HAVING SUM(amount)>CASE WHEN month='opening' THEN ? ELSE ? END
+          )`).bind(rent,opening,deposit,text(data.id),deposit,opening,rent).run();
+      if (!result.meta.changes) return send({error:'आवंटन बंद है, राशि दर्ज भुगतान से कम है या सुरक्षा राशि पहले ही लौटाई जा चुकी है।'},409);
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'leases') {
       const tenant = await db.prepare('SELECT * FROM tenants WHERE id=?').bind(text(data.tenant_id)).first();
       const opening = data.opening ?? 0;
