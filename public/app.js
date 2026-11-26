@@ -32,6 +32,7 @@ const marketOptions = (selected, filter=false) =>
   (filter && ledger.shops.some(s=>!s.market_id)?'<option value="unassigned"'+(selected==='unassigned'?' selected':'')+'>बिना मार्केट</option>':'')+
   ledger.markets.map(m=>'<option value="'+escape(m.id)+'"'+(m.id===selected?' selected':'')+'>'+escape(m.name)+'</option>').join('');
 const marketPicker = () => '<label>मार्केट<select id="market-filter">'+marketOptions(marketFilter,true)+'</select></label>';
+const tenantFor = l => ledger.tenants.find(t=>t.id===l.tenant_id);
 const lease = id => ledger.leases.find(l=>l.id===id);
 const includesMonth = (l,m) => l.start_month <= m && (!l.end_month || l.end_month >= m);
 const action = (name,id,label) => '<button type="button" data-action="'+name+'" data-id="'+escape(id)+'">'+label+'</button>';
@@ -102,7 +103,8 @@ function render(error = '') {
   if (route.startsWith('tenant/')) {
     const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
-    if (tenant) body += toolbar(escape(tenant.name)) + '<p>मोबाइल नंबर · '+escape(tenant.phone || '—')+'</p>'+
+    if (tenant) body += toolbar(escape(tenant.name),action('tenant',tenant.id,'विवरण संपादित करें')) +
+      (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(tenant.phone || '—')+'</p>'+
       '<p>पता · '+escape(tenant.address || '—')+'</p>'+
       '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
       '<p>आधार संख्या · '+(tenant.aadhaar_last4?'XXXX XXXX '+escape(tenant.aadhaar_last4):'—')+'</p>' +
@@ -131,18 +133,18 @@ function render(error = '') {
       escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
         .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—','<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')
     ])) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
-      escape(shopLabel(shop(l.shop_id))),escape(l.tenant),escape(l.phone),money(l.rent),showMonth(l.start_month),
+      escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
       l.end_month ? showMonth(l.end_month) : 'जारी','<a class="button" href="#tenant/'+escape(l.tenant_id)+'">किरायेदार विवरण</a>'
     ]));
   } else if (route === 'rent') {
     body = toolbar('मासिक किराया',marketPicker()+'<label>किराये का महीना<input id="month" type="month" value="'+escape(month)+'" required></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
-        escape(shopLabel(shop(l.shop_id))),escape(l.tenant),money(l.rent),money(paid),money(balance),
+        escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
         balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा'
       ]));
     body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','कुल बकाया','जमा','बाकी',''],
       openingRows().filter(({l})=>inMarket(shop(l.shop_id))).map(({l,paid,balance})=>[
-        escape(shopLabel(shop(l.shop_id))),escape(l.tenant),money(l.opening),money(paid),money(balance),
+        escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.opening),money(paid),money(balance),
         balance>0?action('opening-payment',l.id,'बकाया जमा करें'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
@@ -188,11 +190,29 @@ function dialog(title,fields,route,convert,button='सेव करें') {
     '<div class="toolbar"><button type="button" id="cancel">रद्द करें</button><button class="primary" type="submit">'+button+'</button></div></form>';
   modal.querySelector('#cancel').onclick=()=>modal.close();
   modal.querySelector('form').onsubmit=event=>submit(event,async values=>{
-    await api(route,convert(values));
+    await api(route,await convert(values));
     modal.close();
     await load();
   });
   modal.showModal();
+}
+async function tenantPhoto(file) {
+  if (file.size>25*1024*1024) throw new Error('25 MB तक की फ़ोटो चुनें।');
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); }
+  catch { throw new Error('यह फ़ोटो नहीं खुली। दूसरी फ़ोटो चुनें।'); }
+  try {
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1,720/Math.max(bitmap.width,bitmap.height));
+    canvas.width = Math.max(1,Math.round(bitmap.width*scale));
+    canvas.height = Math.max(1,Math.round(bitmap.height*scale));
+    canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);
+    for (const quality of [0.82,0.65,0.45,0.25]) {
+      const jpeg = canvas.toDataURL('image/jpeg',quality).split(',')[1];
+      if (jpeg?.length<=240000) return jpeg;
+    }
+    throw new Error('छोटी फ़ोटो चुनें।');
+  } finally { bitmap.close(); }
 }
 const minor = value => Math.round(Number(value)*100);
 root.addEventListener('click',event=>{
@@ -204,12 +224,25 @@ root.addEventListener('click',event=>{
     location.hash='shops';
   }
   if (name==='tenant') {
-    dialog('किरायेदार जोड़ें','<label>किरायेदार का नाम<input name="name" maxlength="120" required></label>'+
-      '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" autocomplete="tel-national" required></label>'+
-      '<label>पता<input name="address" maxlength="240"></label>'+
-      '<label>व्यापार<input name="business" maxlength="120"></label>'+
-      '<label>आधार संख्या के आखिरी चार अंक<input name="aadhaar_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>',
-      'tenants',d=>d);
+    const t = ledger.tenants.find(tenant=>tenant.id===id);
+    dialog(t?'किरायेदार का विवरण संपादित करें':'किरायेदार जोड़ें',
+      '<label>किरायेदार का नाम<input name="name" maxlength="120" required value="'+escape(t?.name)+'"></label>'+
+      '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="'+escape(t?.phone)+'"></label>'+
+      '<label>पता<input name="address" maxlength="240" value="'+escape(t?.address)+'"></label>'+
+      '<label>व्यापार<input name="business" maxlength="120" value="'+escape(t?.business)+'"></label>'+
+      '<label>आधार संख्या के आखिरी चार अंक<input name="aadhaar_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="'+escape(t?.aadhaar_last4)+'"></label>'+
+      '<p>'+(t?.has_photo?'मौजूदा फ़ोटो रख सकते हैं या नई फ़ोटो जोड़ सकते हैं।':'किरायेदार की फ़ोटो अनिवार्य है।')+'</p>'+
+      '<label>गैलरी या फ़ाइल से फ़ोटो चुनें<input type="file" name="gallery" accept="image/*"></label>'+
+      '<label>मोबाइल कैमरे से फ़ोटो खींचें<input type="file" name="camera" accept="image/*" capture="user"></label>',
+      'tenants',async ({gallery,camera,...details})=>{
+        const file = [camera,gallery].find(f=>f?.size);
+        if (!file && !t?.has_photo) throw new Error('किरायेदार की फ़ोटो जोड़ें।');
+        return {...details,id:t?.id,photo:file ? await tenantPhoto(file) : null};
+      });
+    const gallery = modal.querySelector('[name="gallery"]');
+    const camera = modal.querySelector('[name="camera"]');
+    gallery.onchange=()=>{if(gallery.files.length) camera.value='';};
+    camera.onchange=()=>{if(camera.files.length) gallery.value='';};
   }
   if (name==='shop') {
     const s=shop(id);
@@ -256,7 +289,7 @@ root.addEventListener('click',event=>{
     const period = opening ? 'opening' : month;
     const balance=(opening ? openingRows() : rentRows(month)).find(r=>r.l.id===id).balance/100;
     const paymentId=crypto.randomUUID();
-    dialog(opening?'शुरुआती बकाया जमा करें':'किराया जमा करें','<p>'+escape(shopLabel(shop(lease(id).shop_id)))+' · '+escape(lease(id).tenant)+' · '+(opening?'शुरुआती बकाया':showMonth(month))+'</p>'+
+    dialog(opening?'शुरुआती बकाया जमा करें':'किराया जमा करें','<p>'+escape(shopLabel(shop(lease(id).shop_id)))+' · '+escape(tenantFor(lease(id))?.name ?? lease(id).tenant)+' · '+(opening?'शुरुआती बकाया':showMonth(month))+'</p>'+
       '<label>राशि (₹)<input type="number" step=".01" min=".01" max="'+balance+'" value="'+balance+'" name="amount" required></label>'+
       '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
       '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
