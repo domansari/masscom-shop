@@ -107,7 +107,7 @@ function render(error = '') {
       (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(tenant.phone || '—')+'</p>'+
       '<p>पता · '+escape(tenant.address || '—')+'</p>'+
       '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
-      '<p>आधार संख्या · '+(tenant.aadhaar_last4?'XXXX XXXX '+escape(tenant.aadhaar_last4):'—')+'</p>' +
+      '<p>किरायेदार आईडी नंबर · '+escape(tenant.tenant_id_number || '—')+'</p>' +
       table(['दुकान','सुरक्षा राशि जमा','वापसी','किरायेदारी',''],ledger.leases.filter(l=>l.tenant_id===tenant.id).map(l=>[
         escape(shopLabel(shop(l.shop_id))),money(l.deposit),
         l.deposit_returned_on ? showDate(l.deposit_returned_on) : l.deposit ? 'वापसी बाकी' : '—',
@@ -230,7 +230,7 @@ root.addEventListener('click',event=>{
       '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="'+escape(t?.phone)+'"></label>'+
       '<label>पता<input name="address" maxlength="240" value="'+escape(t?.address)+'"></label>'+
       '<label>व्यापार<input name="business" maxlength="120" value="'+escape(t?.business)+'"></label>'+
-      '<label>आधार संख्या के आखिरी चार अंक<input name="aadhaar_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" value="'+escape(t?.aadhaar_last4)+'"></label>'+
+      '<label>किरायेदार आईडी नंबर<input name="tenant_id_number" inputmode="numeric" pattern="[0-9]{12}" maxlength="12" required value="'+escape(t?.tenant_id_number)+'"></label><p>अपने रिकॉर्ड का 12 अंकों वाला आईडी नंबर दर्ज करें।</p>'+
       '<p>'+(t?.has_photo?'मौजूदा फ़ोटो रख सकते हैं या नई फ़ोटो जोड़ सकते हैं।':'किरायेदार की फ़ोटो अनिवार्य है।')+'</p>'+
       '<label>गैलरी या फ़ाइल से फ़ोटो चुनें<input type="file" name="gallery" accept="image/*"></label>'+
       '<label>मोबाइल कैमरे से फ़ोटो खींचें<input type="file" name="camera" accept="image/*" capture="user"></label>',

@@ -85,7 +85,7 @@ export async function onRequest({request,env}) {
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT * FROM markets ORDER BY rowid'),
-        db.prepare('SELECT id,name,phone,address,business,aadhaar_last4,photo IS NOT NULL AS has_photo FROM tenants ORDER BY name COLLATE NOCASE')
+        db.prepare('SELECT id,name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
@@ -115,9 +115,9 @@ export async function onRequest({request,env}) {
       const name = text(data.name);
       if (!name) return send({error:'किरायेदार का नाम दर्ज करें।'},400);
       const phone = typeof data.phone === 'string' ? data.phone.trim() : '';
-      const aadhaarLast4 = typeof data.aadhaar_last4 === 'string' ? data.aadhaar_last4.trim() : '';
+      const tenantIdNumber = typeof data.tenant_id_number === 'string' ? data.tenant_id_number.trim() : '';
       if (!/^[0-9]{10}$/.test(phone)) return send({error:'10 अंकों का मोबाइल नंबर दर्ज करें।'},400);
-      if (aadhaarLast4 && !/^[0-9]{4}$/.test(aadhaarLast4)) return send({error:'आधार के आखिरी चार अंक दर्ज करें।'},400);
+      if (!/^[0-9]{12}$/.test(tenantIdNumber)) return send({error:'12 अंकों का किरायेदार आईडी नंबर दर्ज करें।'},400);
       const photo = data.photo;
       if (photo != null && (typeof photo !== 'string' || photo.length>240000 ||
           !/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(photo) || photo.length%4!==0)) {
@@ -126,14 +126,14 @@ export async function onRequest({request,env}) {
       const address = text(data.address,240);
       const business = text(data.business,120);
       if (data.id) {
-        const result = await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,aadhaar_last4=?,photo=COALESCE(?,photo)
+        const result = await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,tenant_id_number=?,photo=COALESCE(?,photo)
           WHERE id=? AND (? IS NOT NULL OR photo IS NOT NULL)`)
-          .bind(name,phone,address,business,aadhaarLast4,photo ?? null,text(data.id),photo ?? null).run();
+          .bind(name,phone,address,business,tenantIdNumber,photo ?? null,text(data.id),photo ?? null).run();
         if (!result.meta.changes) return send({error:'किरायेदार की फ़ोटो जोड़ें और फिर सेव करें।'},400);
       } else {
         if (!photo) return send({error:'किरायेदार की फ़ोटो जोड़ें।'},400);
-        await db.prepare('INSERT INTO tenants (id,name,phone,address,business,aadhaar_last4,photo) VALUES (?,?,?,?,?,?,?)')
-          .bind(crypto.randomUUID(),name,phone,address,business,aadhaarLast4,photo).run();
+        await db.prepare('INSERT INTO tenants (id,name,phone,address,business,tenant_id_number,photo) VALUES (?,?,?,?,?,?,?)')
+          .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,photo).run();
       }
       return send({ok:true});
     }
