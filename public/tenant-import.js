@@ -1,6 +1,6 @@
 const decoder = new TextDecoder();
-const headings = ["किरायेदार का नाम","मोबाइल नंबर","किरायेदार आईडी नंबर","पता","व्यापार"];
-const fields = ['name','phone','tenant_id_number','address','business'];
+const headings = ["किरायेदार का नाम","मोबाइल नंबर","किरायेदार आईडी नंबर","पता","व्यापार","पिता का नाम"];
+const fields = ['name','phone','tenant_id_number','address','business','father_name'];
 const xmlLimit = 4*1024*1024;
 
 function zipDirectory(bytes) {
@@ -69,16 +69,16 @@ export async function readTenantWorkbook(file) {
     const rows=[];
     for (const row of sheet.getElementsByTagNameNS('*','row')) {
       const line=Number(row.getAttribute('r'));
-      const values=Array(5).fill('');
+      const values=Array(fields.length).fill('');
       for (const cell of row.getElementsByTagNameNS('*','c')) {
-        const match=/^([A-E])\d+$/.exec(cell.getAttribute('r') || '');
+        const match=/^([A-F])\d+$/.exec(cell.getAttribute('r') || '');
         if (!match) continue;
         const type=cell.getAttribute('t');
         const value=cell.getElementsByTagNameNS('*','v')[0]?.textContent || '';
         values[match[1].charCodeAt(0)-65]=(type==='s'?dictionary[Number(value)] || '':type==='inlineStr'?combineText(cell):value).trim();
       }
       if (line===1) {
-        if (headings.some((heading,i)=>values[i]!==heading)) throw new Error('Excel टेम्पलेट की पहली पंक्ति के शीर्षक न बदलें।');
+        if (headings.some((heading,i)=>values[i]!==heading && !(i===5 && !values[i]))) throw new Error('Excel टेम्पलेट की पहली पंक्ति के शीर्षक न बदलें।');
         rows.push(null);
       } else if (values.some(Boolean)) {
         rows.push({line,...Object.fromEntries(fields.map((field,i)=>[field,values[i]]))});

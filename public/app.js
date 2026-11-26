@@ -1,4 +1,6 @@
-import {readTenantWorkbook} from './tenant-import.js';
+import {readTenantWorkbook} from './tenant-import.js?v=father1';
+const formatMobile = value => (value || '').replace(/^([0-9]{5})([0-9]{5})$/,'$1-$2');
+const formatTenantId = value => (value || '').replace(/^([0-9]{4})([0-9]{4})([0-9]{4})$/,'$1-$2-$3');
 const root = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const logout = document.querySelector('#logout');
@@ -147,10 +149,11 @@ function render(error = '') {
     const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
     if (tenant) body += toolbar(escape(tenant.name),action('tenant',tenant.id,'विवरण संपादित करें')) +
-      (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(tenant.phone || '—')+'</p>'+
+      (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(formatMobile(tenant.phone) || '—')+'</p>'+
+      '<p>पिता का नाम · '+escape(tenant.father_name || '—')+'</p>'+
       '<p>पता · '+escape(tenant.address || '—')+'</p>'+
       '<p>व्यापार · '+escape(tenant.business || '—')+'</p>'+
-      '<p>किरायेदार आईडी नंबर · '+escape(tenant.tenant_id_number || '—')+'</p>' +
+      '<p>किरायेदार आईडी नंबर · '+escape(formatTenantId(tenant.tenant_id_number) || '—')+'</p>' +
       table(['दुकान','सुरक्षा राशि जमा','वापसी','किरायेदारी',''],ledger.leases.filter(l=>l.tenant_id===tenant.id).map(l=>[
         escape(shopLabel(shop(l.shop_id))),money(l.deposit),
         l.deposit_returned_on ? showDate(l.deposit_returned_on) : l.deposit ? 'वापसी बाकी' : '—',
@@ -176,9 +179,9 @@ function render(error = '') {
       if (!receiptsByLease.has(receipt.lease_id)) receiptsByLease.set(receipt.lease_id,[]);
       receiptsByLease.get(receipt.lease_id).push(receipt);
     }
-    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx" download>Excel टेम्पलेट</a>') +
-    table(['किरायेदार','फ़ोन','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
-      escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
+    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
+    table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
+      escape(t.name),escape(t.father_name || '—'),escape(formatMobile(t.phone)),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
         .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—','<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')
     ])) + toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
       escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),escape(tenantFor(l)?.phone ?? l.phone),money(l.rent),showMonth(l.start_month),
@@ -309,7 +312,7 @@ root.addEventListener('click',event=>{
   }
   if (name==='import-tenants') {
     dialog('Excel से किरायेदार इम्पोर्ट करें',
-      '<p><a class="button" href="/kirayedaar-import-template.xlsx" download>Excel टेम्पलेट डाउनलोड करें</a></p>'+
+      '<p><a class="button" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट डाउनलोड करें</a></p>'+
       '<label>भरी हुई Excel फ़ाइल चुनें<input name="workbook" type="file" accept=".xlsx" required></label>',
       'import-tenants',async ({workbook})=>({rows:await readTenantWorkbook(workbook)}),'इम्पोर्ट करें');
   }
@@ -317,10 +320,11 @@ root.addEventListener('click',event=>{
     const t = ledger.tenants.find(tenant=>tenant.id===id);
     dialog(t?'किरायेदार का विवरण संपादित करें':'किरायेदार जोड़ें',
       '<label>किरायेदार का नाम<input name="name" maxlength="120" required value="'+escape(t?.name)+'"></label>'+
-      '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" required value="'+escape(t?.phone)+'"></label>'+
+      '<label>पिता का नाम<input name="father_name" maxlength="120" value="'+escape(t?.father_name)+'"></label>'+
+      '<label>मोबाइल नंबर<input name="phone" type="tel" inputmode="numeric" pattern="[0-9]{5}-?[0-9]{5}" maxlength="11" placeholder="00000-00000" required value="'+escape(formatMobile(t?.phone))+'"></label>'+
       '<label>पता<input name="address" maxlength="240" value="'+escape(t?.address)+'"></label>'+
       '<label>व्यापार<input name="business" maxlength="120" value="'+escape(t?.business)+'"></label>'+
-      '<label>किरायेदार आईडी नंबर<input name="tenant_id_number" inputmode="numeric" pattern="[0-9]{12}" maxlength="12" required value="'+escape(t?.tenant_id_number)+'"></label>'+
+      '<label>किरायेदार आईडी नंबर<input name="tenant_id_number" inputmode="numeric" pattern="(?:[0-9]{12}|[0-9]{4}-[0-9]{4}-[0-9]{4})" maxlength="14" placeholder="0000-0000-0000" required value="'+escape(formatTenantId(t?.tenant_id_number))+'"></label>'+
       '<label>फ़ोटो चुनें<input type="file" name="photo_file" accept="image/*"></label>',
       'tenants',async ({photo_file,...details})=>({
         ...details,id:t?.id,photo:photo_file?.size ? await tenantPhoto(photo_file) : null

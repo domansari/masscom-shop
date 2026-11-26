@@ -45,6 +45,12 @@ async function verifyPassword(db,request,password,secret) {
   return null;
 }
 
+const tenantPhone = value => /^[0-9]{5}-?[0-9]{5}$/.test(value) ? value.replace('-','') : '';
+const tenantNumber = value => /^(?:[0-9]{12}|[0-9]{4}-[0-9]{4}-[0-9]{4})$/.test(value) ? value.replaceAll('-','') : '';
+const missingPhone = '0000000000';
+const missingNumber = '000000000000';
+const duplicateTenant = 'यह मोबाइल नंबर या किरायेदार आईडी पहले से दर्ज है।';
+
 export async function onRequest({request,env}) {
   const url = new URL(request.url);
   const route = url.pathname.slice(5);
@@ -85,7 +91,7 @@ export async function onRequest({request,env}) {
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT * FROM markets ORDER BY rowid'),
-        db.prepare('SELECT id,name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo FROM tenants ORDER BY name COLLATE NOCASE')
+        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
@@ -116,35 +122,40 @@ export async function onRequest({request,env}) {
       if (!Array.isArray(rows) || !rows.length || rows.length>500) return send({error:'फ़ाइल में 1 से 500 किरायेदार रखें।'},400);
       const tenants = [];
       const ids = new Set();
+      const phones = new Set();
       for (const row of rows) {
         const name = text(row?.name);
-        const phone = typeof row?.phone==='string' ? row.phone.trim() : '';
-        const idNumber = typeof row?.tenant_id_number==='string' ? row.tenant_id_number.trim() : '';
-        if (!name || !/^[0-9]{10}$/.test(phone) || !/^[0-9]{12}$/.test(idNumber)) {
+        const phone = tenantPhone(text(row?.phone,32));
+        const idNumber = tenantNumber(text(row?.tenant_id_number,32));
+        if (!name || !phone || !idNumber) {
           return send({error:'पंक्ति '+Number(row?.line)+' में नाम, 10 अंकों का मोबाइल और 12 अंकों की आईडी जाँचें।'},400);
         }
-        if (ids.has(idNumber)) return send({error:'पंक्ति '+Number(row.line)+' में आईडी पहले से फ़ाइल में है।'},409);
-        ids.add(idNumber);
-        tenants.push({id:crypto.randomUUID(),name,phone,idNumber,address:text(row.address,240),business:text(row.business,120)});
+        if (ids.has(idNumber) || phones.has(phone)) return send({error:'पंक्ति '+Number(row.line)+' में मोबाइल नंबर या आईडी दोबारा दर्ज है।'},409);
+        if (idNumber!==missingNumber) ids.add(idNumber);
+        if (phone!==missingPhone) phones.add(phone);
+        tenants.push({id:crypto.randomUUID(),name,phone,idNumber,address:text(row.address,240),business:text(row.business,120),fatherName:text(row.father_name)});
       }
       const result = await db.prepare(`WITH imported AS (
         SELECT json_extract(value,'$.id') AS id,json_extract(value,'$.name') AS name,json_extract(value,'$.phone') AS phone,
-          json_extract(value,'$.idNumber') AS id_number,json_extract(value,'$.address') AS address,json_extract(value,'$.business') AS business
+          json_extract(value,'$.idNumber') AS id_number,json_extract(value,'$.address') AS address,json_extract(value,'$.business') AS business,
+          json_extract(value,'$.fatherName') AS father_name
         FROM json_each(?)
-      ) INSERT INTO tenants (id,name,phone,tenant_id_number,address,business)
-      SELECT id,name,phone,id_number,address,business FROM imported
-      WHERE NOT EXISTS (SELECT 1 FROM imported JOIN tenants ON tenants.tenant_id_number=imported.id_number)`)
-        .bind(JSON.stringify(tenants)).run();
-      if (!result.meta.changes) return send({error:'फ़ाइल में कोई आईडी पहले से ऐप में दर्ज है। सभी पंक्तियाँ जाँचें।'},409);
+      ) INSERT INTO tenants (id,name,phone,tenant_id_number,address,business,father_name)
+      SELECT id,name,phone,id_number,address,business,father_name FROM imported
+      WHERE NOT EXISTS (SELECT 1 FROM imported JOIN tenants ON
+        (imported.id_number<>? AND replace(tenants.tenant_id_number,'-','')=imported.id_number) OR
+        (imported.phone<>? AND replace(tenants.phone,'-','')=imported.phone))`)
+        .bind(JSON.stringify(tenants),missingNumber,missingPhone).run();
+      if (!result.meta.changes) return send({error:'फ़ाइल में कोई मोबाइल नंबर या आईडी पहले से ऐप में दर्ज है।'},409);
       return send({ok:true,count:result.meta.changes});
     }
     if (method === 'POST' && route === 'tenants') {
       const name = text(data.name);
       if (!name) return send({error:'किरायेदार का नाम दर्ज करें।'},400);
-      const phone = typeof data.phone === 'string' ? data.phone.trim() : '';
-      const tenantIdNumber = typeof data.tenant_id_number === 'string' ? data.tenant_id_number.trim() : '';
-      if (!/^[0-9]{10}$/.test(phone)) return send({error:'10 अंकों का मोबाइल नंबर दर्ज करें।'},400);
-      if (!/^[0-9]{12}$/.test(tenantIdNumber)) return send({error:'12 अंकों का किरायेदार आईडी नंबर दर्ज करें।'},400);
+      const phone = tenantPhone(text(data.phone,32));
+      const tenantIdNumber = tenantNumber(text(data.tenant_id_number,32));
+      if (!phone) return send({error:'10 अंकों का मोबाइल नंबर दर्ज करें।'},400);
+      if (!tenantIdNumber) return send({error:'12 अंकों का किरायेदार आईडी नंबर दर्ज करें।'},400);
       const photo = data.photo;
       if (photo != null && (typeof photo !== 'string' || photo.length>240000 ||
           !/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(photo) || photo.length%4!==0)) {
@@ -152,15 +163,19 @@ export async function onRequest({request,env}) {
       }
       const address = text(data.address,240);
       const business = text(data.business,120);
-      if (data.id) {
-        const result = await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,tenant_id_number=?,photo=COALESCE(?,photo)
-          WHERE id=?`)
-          .bind(name,phone,address,business,tenantIdNumber,photo ?? null,text(data.id)).run();
-        if (!result.meta.changes) return send({error:'किरायेदार का रिकॉर्ड नहीं मिला।'},404);
-      } else {
-        await db.prepare('INSERT INTO tenants (id,name,phone,address,business,tenant_id_number,photo) VALUES (?,?,?,?,?,?,?)')
-          .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,photo ?? null).run();
-      }
+      const fatherName = text(data.father_name);
+      const tenantId = text(data.id);
+      const conflict = `SELECT 1 FROM tenants WHERE id<>? AND
+        ((?<>? AND replace(phone,'-','')=?) OR (?<>? AND replace(tenant_id_number,'-','')=?))`;
+      const match = [tenantId,phone,missingPhone,phone,tenantIdNumber,missingNumber,tenantIdNumber];
+      const result = tenantId
+        ? await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,tenant_id_number=?,father_name=?,photo=COALESCE(?,photo)
+            WHERE id=? AND NOT EXISTS (${conflict})`)
+          .bind(name,phone,address,business,tenantIdNumber,fatherName,photo ?? null,tenantId,...match).run()
+        : await db.prepare(`INSERT INTO tenants (id,name,phone,address,business,tenant_id_number,father_name,photo)
+            SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (${conflict})`)
+          .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,fatherName,photo ?? null,...match).run();
+      if (!result.meta.changes) return send({error:duplicateTenant},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'leases') {
