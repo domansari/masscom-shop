@@ -31,3 +31,16 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 @media(max-width:760px){.grid,.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.panel,.card{padding:14px}main{padding-top:24px}}
 @media(max-width:360px){.metrics{grid-template-columns:1fr}}
 @media print{header,main,dialog{display:none!important}body{background:white;color:black}#print{display:block;padding:12mm}#print p{color:black}}
+
+.dashboard-hero{display:flex;align-items:center;justify-content:center;gap:clamp(10px,3vw,32px)}
+.dashboard-clock{display:grid;justify-items:center;gap:5px;flex:0 0 auto}
+.dashboard-clock svg{width:clamp(54px,10vw,80px);height:auto}
+.dashboard-clock time{font:500 clamp(.62rem,1.6vw,.82rem) Inter,system-ui,sans-serif;color:#d1d5db}
+.clock-face{fill:#172144;stroke:#9daaf6;stroke-width:2}
+.clock-tick,.clock-hour,.clock-minute{stroke:#eef2ff;stroke-linecap:round}
+.clock-tick{stroke-width:1.4}.clock-hour{stroke-width:4}.clock-minute{stroke-width:2.5}
+.clock-second{stroke:#fda4af;stroke-width:1.5;stroke-linecap:round}.clock-pin{fill:#fda4af}
+.dashboard-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.catalog-tabs{display:flex;justify-content:center;gap:6px;flex-wrap:wrap}
+.catalog-tabs strong{margin-inline-start:3px;color:#a5f3fc}
+@media(max-width:760px){.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
