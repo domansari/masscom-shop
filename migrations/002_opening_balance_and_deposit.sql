@@ -1,0 +1,3 @@
+ALTER TABLE leases ADD COLUMN opening INTEGER NOT NULL DEFAULT 0 CHECK(opening >= 0);
+ALTER TABLE leases ADD COLUMN deposit INTEGER NOT NULL DEFAULT 0 CHECK(deposit >= 0);
+ALTER TABLE leases ADD COLUMN deposit_returned_on TEXT;

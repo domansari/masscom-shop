@@ -24,6 +24,27 @@ function text(value, max = 120) {
 }
 const validAmount = amount => Number.isSafeInteger(amount) && amount > 0 && amount <= 10000000000;
 
+async function verifyPassword(db,request,password,secret) {
+  if (typeof password !== 'string' || password.length < 8 || password.length > 20) {
+    return send({error:'8 से 20 अक्षरों का पासवर्ड डालें।'},400);
+  }
+  await db.prepare('CREATE TABLE IF NOT EXISTS login_attempts (client TEXT PRIMARY KEY, expires INTEGER NOT NULL, attempts INTEGER NOT NULL)').run();
+  const client = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const time = Date.now();
+  const attempt = await db.prepare(`INSERT INTO login_attempts VALUES (?, ?, 1)
+    ON CONFLICT(client) DO UPDATE SET
+    attempts=CASE WHEN expires<=? THEN 1 ELSE attempts+1 END,
+    expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END
+    WHERE expires<=? OR attempts<10
+    RETURNING attempts`).bind(client,time+900000,time,time,time).first();
+  if (!attempt) return send({error:'बहुत ज़्यादा कोशिशें हुई हैं। 15 मिनट बाद फिर कोशिश करें।'},429);
+  if (!await matches(password,secret)) {
+    return send({error:'पासवर्ड गलत है।'},401);
+  }
+  await db.prepare('DELETE FROM login_attempts WHERE client=? OR expires<=?').bind(client,time).run();
+  return null;
+}
+
 export async function onRequest({request,env}) {
   const url = new URL(request.url);
   const route = url.pathname.slice(5);
@@ -40,23 +61,8 @@ export async function onRequest({request,env}) {
       if (!data || typeof data !== 'object') return send({error:'Invalid request.'},400);
     }
     if (method === 'POST' && route === 'login') {
-      if (typeof data.password !== 'string' || data.password.length < 8 || data.password.length > 20) {
-        return send({error:'8 से 20 अक्षरों का पासवर्ड डालें।'},400);
-      }
-      await db.prepare('CREATE TABLE IF NOT EXISTS login_attempts (client TEXT PRIMARY KEY, expires INTEGER NOT NULL, attempts INTEGER NOT NULL)').run();
-      const client = request.headers.get('CF-Connecting-IP') || 'unknown';
-      const time = Date.now();
-      const attempt = await db.prepare(`INSERT INTO login_attempts VALUES (?, ?, 1)
-        ON CONFLICT(client) DO UPDATE SET
-        attempts=CASE WHEN expires<=? THEN 1 ELSE attempts+1 END,
-        expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END
-        WHERE expires<=? OR attempts<10
-        RETURNING attempts`).bind(client,time+900000,time,time,time).first();
-      if (!attempt) return send({error:'बहुत ज़्यादा कोशिशें हुई हैं। 15 मिनट बाद फिर कोशिश करें।'},429);
-      if (!await matches(data.password,env.ADMIN_PASSWORD)) {
-        return send({error:'पासवर्ड गलत है।'},401);
-      }
-      await db.prepare('DELETE FROM login_attempts WHERE client=? OR expires<=?').bind(client,time).run();
+      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      if (failure) return failure;
       const id = crypto.randomUUID();
       const now = Date.now();
       await db.batch([
@@ -107,36 +113,56 @@ export async function onRequest({request,env}) {
     }
     if (method === 'POST' && route === 'leases') {
       const tenant = await db.prepare('SELECT * FROM tenants WHERE id=?').bind(text(data.tenant_id)).first();
-      if (!tenant || !monthValid(data.start_month) || !validAmount(data.rent)) {
-        return send({error:'किरायेदार का नाम, शुरुआती महीना और सही किराया दर्ज करें।'},400);
+      const opening = data.opening ?? 0;
+      const deposit = data.deposit ?? 0;
+      const startMonth = day().slice(0,7);
+      if (!tenant || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+        return send({error:'किरायेदार चुनें और किराया, पिछला बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
-      const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id)
-        SELECT ?,id,?,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
+      const result = await db.prepare(`INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit)
+        SELECT ?,id,?,?,?,?,?,?,? FROM shops WHERE id=? AND NOT EXISTS (
           SELECT 1 FROM leases WHERE shop_id=shops.id AND (end_month IS NULL OR end_month>=?)
-        )`).bind(crypto.randomUUID(),tenant.name,tenant.phone,data.rent,data.start_month,tenant.id,data.shop_id,data.start_month).run();
+        )`).bind(crypto.randomUUID(),tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit,data.shop_id,startMonth).run();
       if (!result.meta.changes) return send({error:'इस दुकान के लिए उस महीने से किरायेदारी पहले से दर्ज है।'},409);
       return send({ok:true});
     }
+    if (method === 'POST' && ['return-deposit','end-lease'].includes(route)) {
+      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      if (failure) return failure;
+    }
+    if (method === 'POST' && route === 'return-deposit') {
+      if (!dateValid(data.returned_on) || data.returned_on>day()) {
+        return send({error:'वापसी की सही तारीख चुनें।'},400);
+      }
+      const result = await db.prepare(`UPDATE leases SET deposit_returned_on=? WHERE id=?
+        AND deposit>0 AND deposit_returned_on IS NULL AND end_month IS NULL
+        AND start_month<=substr(?,1,7)`).bind(data.returned_on,data.id,data.returned_on).run();
+      if (!result.meta.changes) return send({error:'वापसी दर्ज नहीं हुई। किरायेदारी और तारीख जाँचें।'},409);
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'end-lease') {
+      const active = await db.prepare('SELECT deposit,deposit_returned_on FROM leases WHERE id=? AND end_month IS NULL').bind(data.id).first();
+      if (active?.deposit>0 && !active.deposit_returned_on) return send({error:'पहले सुरक्षा राशि की वापसी दर्ज करें।'},409);
       if (!monthValid(data.end_month)) return send({error:'किराये का अंतिम महीना चुनें।'},400);
       const result = await db.prepare(`UPDATE leases SET end_month=? WHERE id=? AND end_month IS NULL AND start_month<=?
-        AND NOT EXISTS (SELECT 1 FROM payments WHERE lease_id=leases.id AND month>?)`)
+        AND (deposit=0 OR deposit_returned_on IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM payments WHERE lease_id=leases.id AND month!='opening' AND month>?)`)
         .bind(data.end_month,data.id,data.end_month,data.end_month).run();
       if (!result.meta.changes) return send({error:'अंतिम महीना, शुरुआती महीने और दर्ज भुगतानों के महीनों से पहले का नहीं हो सकता।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'payments') {
-      if (!monthValid(data.month) || !validAmount(data.amount) ||
+      if ((data.month!=='opening' && !monthValid(data.month)) || !validAmount(data.amount) ||
           !['Cash','UPI','Bank Transfer','Cheque'].includes(data.method) ||
           !dateValid(data.paid_on) || data.paid_on > day() || !/^[a-f0-9-]{36}$/.test(data.id)) {
         return send({error:'सही राशि, भुगतान की तारीख और तरीका दर्ज करें।'},400);
       }
       if (await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) return send({ok:true});
       const result = await db.prepare(`INSERT INTO payments (id,lease_id,month,amount,method,paid_on)
-        SELECT ?,id,?,?,?,? FROM leases WHERE id=? AND start_month<=? AND (end_month IS NULL OR end_month>=?)
-        AND rent - COALESCE((SELECT SUM(amount) FROM payments WHERE lease_id=leases.id AND month=?),0)>=?
+        SELECT ?,id,?,?,?,? FROM leases WHERE id=? AND (?='opening' OR (start_month<=? AND (end_month IS NULL OR end_month>=?)))
+        AND (CASE WHEN ?='opening' THEN opening ELSE rent END) - COALESCE((SELECT SUM(amount) FROM payments WHERE lease_id=leases.id AND month=?),0)>=?
         ON CONFLICT(id) DO NOTHING`).bind(data.id,data.month,data.amount,data.method,data.paid_on,
-          data.lease_id,data.month,data.month,data.month,data.amount).run();
+          data.lease_id,data.month,data.month,data.month,data.month,data.month,data.amount).run();
       if (!result.meta.changes && !await db.prepare('SELECT id FROM payments WHERE id=?').bind(data.id).first()) {
         return send({error:'राशि बाकी किराये से अधिक है या चुना हुआ महीना किरायेदारी की अवधि से बाहर है।'},409);
       }
