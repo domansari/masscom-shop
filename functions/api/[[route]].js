@@ -111,6 +111,33 @@ export async function onRequest({request,env}) {
         headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}
       });
     }
+    if (method === 'POST' && route === 'import-tenants') {
+      const rows = data.rows;
+      if (!Array.isArray(rows) || !rows.length || rows.length>500) return send({error:'फ़ाइल में 1 से 500 किरायेदार रखें।'},400);
+      const tenants = [];
+      const ids = new Set();
+      for (const row of rows) {
+        const name = text(row?.name);
+        const phone = typeof row?.phone==='string' ? row.phone.trim() : '';
+        const idNumber = typeof row?.tenant_id_number==='string' ? row.tenant_id_number.trim() : '';
+        if (!name || !/^[0-9]{10}$/.test(phone) || !/^[0-9]{12}$/.test(idNumber)) {
+          return send({error:'पंक्ति '+Number(row?.line)+' में नाम, 10 अंकों का मोबाइल और 12 अंकों की आईडी जाँचें।'},400);
+        }
+        if (ids.has(idNumber)) return send({error:'पंक्ति '+Number(row.line)+' में आईडी पहले से फ़ाइल में है।'},409);
+        ids.add(idNumber);
+        tenants.push({id:crypto.randomUUID(),name,phone,idNumber,address:text(row.address,240),business:text(row.business,120)});
+      }
+      const result = await db.prepare(`WITH imported AS (
+        SELECT json_extract(value,'$.id') AS id,json_extract(value,'$.name') AS name,json_extract(value,'$.phone') AS phone,
+          json_extract(value,'$.idNumber') AS id_number,json_extract(value,'$.address') AS address,json_extract(value,'$.business') AS business
+        FROM json_each(?)
+      ) INSERT INTO tenants (id,name,phone,tenant_id_number,address,business)
+      SELECT id,name,phone,id_number,address,business FROM imported
+      WHERE NOT EXISTS (SELECT 1 FROM imported JOIN tenants ON tenants.tenant_id_number=imported.id_number)`)
+        .bind(JSON.stringify(tenants)).run();
+      if (!result.meta.changes) return send({error:'फ़ाइल में कोई आईडी पहले से ऐप में दर्ज है। सभी पंक्तियाँ जाँचें।'},409);
+      return send({ok:true,count:result.meta.changes});
+    }
     if (method === 'POST' && route === 'tenants') {
       const name = text(data.name);
       if (!name) return send({error:'किरायेदार का नाम दर्ज करें।'},400);

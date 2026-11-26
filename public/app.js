@@ -1,3 +1,4 @@
+import {readTenantWorkbook} from './tenant-import.js';
 const root = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const logout = document.querySelector('#logout');
@@ -175,7 +176,7 @@ function render(error = '') {
       if (!receiptsByLease.has(receipt.lease_id)) receiptsByLease.set(receipt.lease_id,[]);
       receiptsByLease.get(receipt.lease_id).push(receipt);
     }
-    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')) +
+    body = toolbar('किरायेदार',action('tenant','','किरायेदार जोड़ें')+' '+action('lease','','दुकान आवंटित करें')+' '+action('import-tenants','','Excel इम्पोर्ट')+' <a class="button" href="/kirayedaar-import-template.xlsx" download>Excel टेम्पलेट</a>') +
     table(['किरायेदार','फ़ोन','अभी किराये पर ली गई दुकानें',''],ledger.tenants.map(t=>[
       escape(t.name),escape(t.phone),ledger.leases.filter(l=>l.tenant_id===t.id && isOccupied(l))
         .map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>')||'—','<a class="button" href="#tenant/'+escape(t.id)+'">विवरण</a> '+action('lease',t.id,'दुकान आवंटित करें')
@@ -203,6 +204,19 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
+    const rented = ledger.shops.filter(s=>occupied(s.id)).length;
+    const reserved = ledger.shops.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
+    const occupancy = [rented,ledger.shops.length-rented-reserved,reserved];
+    const occupancyLabels = ['किराये पर','खाली','आगे के लिए आवंटित'];
+    const colors = ['#34d399','#60a5fa','#fbbf24'];
+    let offset=0;
+    const chart = occupancy.map((count,i)=>{
+      const from=offset;
+      const length=ledger.shops.length?count/ledger.shops.length*100:0;
+      offset+=length;
+      return '<circle cx="60" cy="60" r="44" pathLength="100" fill="none" stroke="'+colors[i]+'" stroke-width="30" '+
+        'stroke-dasharray="'+length+' '+(100-length)+'" stroke-dashoffset="'+(-from)+'" transform="rotate(-90 60 60)"/>';
+    }).join('');
     const cards = [['किरायेदार','एक किरायेदार के नाम कई दुकानें','♙','tenants'],
       ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
     root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
@@ -214,6 +228,10 @@ function render(error = '') {
       '<circle class="clock-pin" cx="40" cy="40" r="3"/></svg><time id="date"></time></div></div>'+
       '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
+      '<section class="panel occupancy-panel"><h2>दुकानों की स्थिति</h2><div class="occupancy-content">'+
+      '<svg viewBox="0 0 120 120" aria-hidden="true">'+chart+'</svg><ul>'+
+      occupancyLabels.map((label,i)=>'<li><span class="occupancy-dot occupancy-dot-'+i+'"></span>'+label+' <strong>'+occupancy[i]+'</strong></li>').join('')+
+      '<li>कुल दुकानें <strong>'+ledger.shops.length+'</strong></li></ul></div></section>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
       '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
       '<a class="button" href="#shops">दुकानें <strong>'+ledger.shops.length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
@@ -288,6 +306,12 @@ root.addEventListener('click',event=>{
   if (name==='open-market') {
     marketFilter=id;
     location.hash='shops';
+  }
+  if (name==='import-tenants') {
+    dialog('Excel से किरायेदार इम्पोर्ट करें',
+      '<p><a class="button" href="/kirayedaar-import-template.xlsx" download>Excel टेम्पलेट डाउनलोड करें</a></p>'+
+      '<label>भरी हुई Excel फ़ाइल चुनें<input name="workbook" type="file" accept=".xlsx" required></label>',
+      'import-tenants',async ({workbook})=>({rows:await readTenantWorkbook(workbook)}),'इम्पोर्ट करें');
   }
   if (name==='tenant') {
     const t = ledger.tenants.find(tenant=>tenant.id===id);
