@@ -277,16 +277,16 @@ function render(error = '') {
     body = '<form id="rent-tenant-form"><label>मार्केट चुनें<select id="rent-tenant-market">'+
       marketOptions(rentTenantMarket,true)+'</select></label><label>किरायेदार चुनें<select name="tenant_id" required>'+
       '<option value="">किरायेदार चुनें</option>'+tenantOptions+'</select></label>'+
-      '<div><button class="primary" type="submit">किराया जमा करें</button></div></form>'+
+      '<div><button class="action-pay" type="submit">किराया जमा करें</button></div></form>'+
       '<hr>'+toolbar('मासिक किराया','<label>किराये का महीना<select id="month">'+monthOptions+'</select></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
-        balance>0?action('payment',l.id,'किराया जमा करें'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें')
+        balance>0?action('payment',l.id,'किराया जमा करें','pay'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें')
       ]));
     body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','शुरुआत में दर्ज रकम','जमा','अब बाकी',''],
       openingRows().filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.opening),money(paid),money(balance),
-        balance>0?action('opening-payment',l.id,'बकाया जमा करें'):'पूरा जमा'
+        balance>0?action('opening-payment',l.id,'बकाया जमा करें','pay'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
     body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],receiptRows().filter(p=>p.items.some(item=>inMarket(shop(lease(item.lease_id).shop_id)))).map(p=>[
@@ -324,7 +324,7 @@ function render(error = '') {
       '<line id="clock-minute" class="clock-minute" x1="40" y1="40" x2="40" y2="15"/>'+
       '<line id="clock-second" class="clock-second" x1="40" y1="46" x2="40" y2="13"/>'+
       '<circle class="clock-pin" cx="40" cy="40" r="3"/></svg><time id="date"></time></div></div>'+
-      '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button primary">किराया जमा करें</a>')+'<div class="metrics">'+
+      '<section class="panel">'+toolbar('किराये का सारांश','<a href="#rent" class="button action-pay">किराया जमा करें</a>')+'<div class="metrics">'+
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
       '<div class="rent-charts">'+charts+'</div>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
@@ -552,17 +552,22 @@ function openTenantPayment(name,id) {
   const months = [...new Set(paymentOptions.flatMap(({periods})=>periods.map(([key])=>key))
     .filter(key=>paymentCategory(key,current)==='advance'))].sort();
   const categories = new Set(paymentOptions.flatMap(({periods})=>periods.map(([key])=>paymentCategory(key,current))));
-  const quickFill = combined ? '<fieldset><legend>सभी दुकानों की बाकी राशि भरें</legend>'+
-    '<button type="button" data-fill="current"'+(categories.has('current')?'':' disabled')+'>चालू महीने का पूरा किराया</button> '+
-    '<button type="button" data-fill="arrears"'+(categories.has('arrears')?'':' disabled')+'>पूरा बकाया</button>'+
-    (months.length?' <button type="button" id="select-advance" aria-controls="advance-month-field" aria-expanded="false">एडवांस</button>'+
-      '<label id="advance-month-field" hidden>एडवांस का महीना<select id="advance-month"><option value="">महीना चुनें</option>'+
-      months.map(m=>'<option value="'+m+'">'+showMonth(m)+'</option>').join('')+'</select></label>':'')+
-    '<p id="payment-fill-status" role="status"></p></fieldset>' : '';
+  const quickFill = '<div class="payment-quick-actions">'+
+    '<button type="button" data-fill="current"'+(!categories.has('current')||categories.has('arrears')?' disabled':'')+'>चालू माह</button> '+
+    '<button type="button" data-fill="arrears"'+(categories.has('arrears')?'':' disabled')+'>बकाया</button>'+
+    (months.length?' <button type="button" id="select-advance" aria-controls="advance-controls" aria-expanded="false">एडवांस</button>':'')+
+    '</div>'+
+    (months.length?'<div id="advance-controls" hidden>'+
+      '<div id="advance-month-selectors"><label>एडवांस का महीना<select id="advance-month-0" data-advance-month><option value="">महीना चुनें</option>'+
+      months.map(m=>'<option value="'+escape(m)+'">'+showMonth(m)+'</option>').join('')+
+      '</select></label></div>'+
+      '<button type="button" id="add-advance-month" hidden>एक माह और जोड़ें</button>'+
+      '</div>':'')+
+    '<p id="payment-fill-status" role="status"></p>';
   const paymentId=crypto.randomUUID();
   const tenant = combined ? ledger.tenants.find(t=>t.id===id) : tenantFor(leases[0]);
-  dialog(combined?'दुकानों का किराया एक साथ जमा करें':'किराया जमा करें','<p>'+escape(tenant?.name ?? leases[0].tenant)+'</p>'+
-    quickFill+(combined?'<div hidden>'+periodFields+'</div>':'<fieldset><legend>दुकान और महीने के हिसाब से राशि</legend>'+periodFields+'</fieldset>')+
+  dialog('किराया जमा करें','<p>'+escape(tenant?.name ?? leases[0].tenant)+'</p>'+
+    quickFill+'<div id="payment-period-fields" hidden>'+periodFields+'</div>'+
     '<p>कुल भुगतान <strong id="payment-total"></strong></p>'+
     '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
     '<label>भुगतान की तारीख<input type="date" name="paid_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label>'+
@@ -573,37 +578,92 @@ function openTenantPayment(name,id) {
         const [lease_id,month] = key.slice(7).split('/');
         return {lease_id,month,amount:minor(value)};
       }).filter(item=>item.amount>0);
-      if (!items.length) throw new Error('किसी महीने या बकाये की राशि भरें।');
+      if (!items.length) throw new Error('किसी महीने या बकाये की राशि चुनें।');
       return {id:paymentId,receipt_number,paid_on,method,transaction_id,items};
     },'भुगतान सेव करें');
   const paymentFields = [...modal.querySelectorAll('[name^="period_"]')];
   const updateTotal = ()=>{modal.querySelector('#payment-total').textContent=money(paymentFields.reduce((sum,input)=>sum+minor(input.value),0));};
-  for (const input of paymentFields) input.addEventListener('input',updateTotal);
+  const currentFields = paymentFields.filter(input=>paymentCategory(input.name.split('/')[1],current)==='current');
+  const arrearsFields = paymentFields.filter(input=>paymentCategory(input.name.split('/')[1],current)==='arrears');
+  const advanceFields = paymentFields.filter(input=>paymentCategory(input.name.split('/')[1],current)==='advance');
   const fillStatus = modal.querySelector('#payment-fill-status');
+  const currentButton = modal.querySelector('[data-fill="current"]');
+  const arrearsIncluded = () => arrearsFields.every(input=>
+    Math.round(Number(input.value||0)*100)>=Math.round(Number(input.max||0)*100));
+  const updateCurrentButton = () => {
+    if (currentButton) currentButton.disabled=!currentFields.length || (arrearsFields.length>0 && !arrearsIncluded());
+  };
+  for (const input of paymentFields) input.addEventListener('input',()=>{
+    updateTotal();
+    updateCurrentButton();
+  });
   for (const button of modal.querySelectorAll('[data-fill]')) {
     button.addEventListener('click',()=>{
+      if (button.dataset.fill==='current' && !arrearsIncluded()) return;
       for (const input of paymentFields) {
         if (paymentCategory(input.name.split('/')[1],current)===button.dataset.fill) input.value=input.max;
       }
       updateTotal();
-      fillStatus.textContent='सभी दुकानों की बाकी राशि कुल भुगतान में जुड़ गई है।';
+      updateCurrentButton();
+      fillStatus.textContent=button.dataset.fill==='arrears'
+        ? 'बकाया कुल भुगतान में जुड़ गया है।'
+        : 'चालू माह का किराया कुल भुगतान में जुड़ गया है।';
     });
   }
   const advanceButton = modal.querySelector('#select-advance');
-  const advanceMonth = modal.querySelector('#advance-month');
-  advanceButton?.addEventListener('click',()=>{
-    modal.querySelector('#advance-month-field').hidden=false;
-    advanceButton.setAttribute('aria-expanded','true');
-    advanceMonth.focus();
-  });
-  advanceMonth?.addEventListener('change',()=>{
-    for (const input of paymentFields) {
-      const period = input.name.split('/')[1];
-      if (paymentCategory(period,current)==='advance') input.value=period===advanceMonth.value?input.max:'';
+  const advanceControls = modal.querySelector('#advance-controls');
+  const advanceSelectors = modal.querySelector('#advance-month-selectors');
+  const addAdvanceButton = modal.querySelector('#add-advance-month');
+  let advanceSelectCount=1;
+  const selectedAdvanceMonths = () => [...advanceSelectors.querySelectorAll('[data-advance-month]')]
+    .map(select=>select.value).filter(Boolean);
+  const refreshAdvanceSelectors = () => {
+    const selects=[...advanceSelectors.querySelectorAll('[data-advance-month]')];
+    const selected=selects.map(select=>select.value).filter(Boolean);
+    for (const select of selects) {
+      const keep=select.value;
+      select.innerHTML='<option value="">महीना चुनें</option>'+
+        months.filter(month=>month===keep || !selected.includes(month))
+          .map(month=>'<option value="'+escape(month)+'">'+showMonth(month)+'</option>').join('');
+      select.value=keep;
+    }
+  };
+  const updateAdvancePayments = () => {
+    const selected=new Set(selectedAdvanceMonths());
+    for (const input of advanceFields) {
+      const period=input.name.split('/')[1];
+      input.value=selected.has(period)?input.max:'';
     }
     updateTotal();
-    fillStatus.textContent=advanceMonth.value ? 'चुने हुए महीने का एडवांस कुल भुगतान में जुड़ गया है।' : '';
+    refreshAdvanceSelectors();
+    const selects=advanceSelectors.querySelectorAll('[data-advance-month]');
+    const selectedCount=selected.size;
+    addAdvanceButton.hidden=selectedCount===0;
+    addAdvanceButton.disabled=selects.length>=months.length;
+    fillStatus.textContent=selectedCount
+      ? [...selected].map(showMonth).join(' और ')+' का एडवांस कुल भुगतान में जुड़ गया है।'
+      : '';
+  };
+  advanceButton?.addEventListener('click',()=>{
+    advanceControls.hidden=false;
+    advanceButton.setAttribute('aria-expanded','true');
+    advanceSelectors.querySelector('[data-advance-month]')?.focus();
   });
+  advanceSelectors?.addEventListener('change',event=>{
+    if (event.target.matches('[data-advance-month]')) updateAdvancePayments();
+  });
+  addAdvanceButton?.addEventListener('click',()=>{
+    const selects=advanceSelectors.querySelectorAll('[data-advance-month]');
+    if (selectedAdvanceMonths().length===0 || selects.length>=months.length) return;
+    const id='advance-month-'+advanceSelectCount++;
+    advanceSelectors.insertAdjacentHTML('beforeend','<label>एक और एडवांस महीना<select id="'+id+'" data-advance-month><option value="">महीना चुनें</option>'+
+      months.map(m=>'<option value="'+escape(m)+'">'+showMonth(m)+'</option>').join('')+
+      '</select></label>');
+    refreshAdvanceSelectors();
+    advanceSelectors.querySelector('#'+id)?.focus();
+    updateAdvancePayments();
+  });
+  updateCurrentButton();
   updateTotal();
   const method=modal.querySelector('[name="method"]');
   const field=modal.querySelector('#transaction-field');
