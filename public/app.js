@@ -325,8 +325,31 @@ function render(error = '') {
         row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
         money(row.total),'<button type="button" class="action-message" disabled title="WhatsApp API और संदेश टेम्पलेट लंबित हैं">संदेश भेजें</button>'
       ]));
+    const marketOrder = new Map(activeMarkets().map((market,index)=>[market.id,index]));
+    const shopNumberOrder = new Intl.Collator('hi-IN',{numeric:true,sensitivity:'base'});
+    const compareShops = (a,b) =>
+      (marketOrder.get(a.market_id) ?? marketOrder.size) - (marketOrder.get(b.market_id) ?? marketOrder.size) ||
+      shopNumberOrder.compare(shopNumber(a),shopNumber(b));
+    const firstShop = new Map();
+    for (const allocation of ledger.leases) {
+      if (allocation.end_month && allocation.end_month<current) continue;
+      const assignedShop = shop(allocation.shop_id);
+      if (!assignedShop || (tenantListMarket && (assignedShop.market_id || 'unassigned')!==tenantListMarket)) continue;
+      const future = allocation.start_month>current;
+      const previous = firstShop.get(allocation.tenant_id);
+      if (!previous || (previous.future && !future) ||
+          (previous.future===future && compareShops(assignedShop,previous.shop)<0)) {
+        firstShop.set(allocation.tenant_id,{shop:assignedShop,future});
+      }
+    }
     const visibleTenants = ledger.tenants.filter(t=>!t.is_archived && (!tenantListMarket ||
-      (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket))));
+      (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket))))
+      .sort((a,b)=>{
+        const first = firstShop.get(a.id);
+        const second = firstShop.get(b.id);
+        if (!first || !second) return Number(Boolean(second))-Number(Boolean(first));
+        return compareShops(first.shop,second.shop);
+      });
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
     const tenantListContent = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
@@ -346,7 +369,7 @@ function render(error = '') {
             (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay
           : '';
         return [escape(t.name)+(t.is_active?'':' <span class="tenant-inactive">निष्क्रिय</span>'),escape(t.father_name || '—'),escape(formatMobile(t.phone)),
-          allocations.filter(isOccupied).map(l=>escape(shopLabel(shop(l.shop_id)))).join('<br>') || '—',
+          allocations.filter(isOccupied).map(l=>shop(l.shop_id)).sort(compareShops).map(s=>escape(shopLabel(s))).join('<br>') || '—',
           '<a class="button action-details" href="#tenant/'+escape(t.id)+'">विवरण</a> '+statusAction+tenancyActions];
       }));
     const tenancyRecordContent = toolbar('किरायेदारी का रिकॉर्ड',marketPicker()) + table(['दुकान','किरायेदार','फ़ोन','मासिक किराया','शुरुआती माह','अंतिम माह','जमा भुगतान',''],ledger.leases.filter(l=>inMarket(shop(l.shop_id))).map(l=>[
