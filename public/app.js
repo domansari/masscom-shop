@@ -689,7 +689,7 @@ async function tenantPhoto(file) {
   } finally { bitmap.close(); }
 }
 const minor = value => Math.round(Number(value)*100);
-root.addEventListener('click',event=>{
+root.addEventListener('click',async event=>{
   const button=event.target.closest('[data-action]');
   if (!button) return;
   const {action:name,id}=button.dataset;
