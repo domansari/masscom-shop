@@ -50,6 +50,7 @@ let tenantDueRows = [];
 let marketFilter = '';
 let tenantListMarket = '';
 let rentTenantMarket = '';
+const activeMarkets = () => ledger.markets.filter(m=>!m.is_archived);
 const activeShops = () => ledger.shops.filter(s=>!s.is_archived);
 const shop = id => ledger.shops.find(s=>s.id===id);
 const marketOf = s => ledger.markets.find(m=>m.id===s.market_id);
@@ -59,7 +60,7 @@ const inMarket = s => !marketFilter || (s.market_id || 'unassigned') === marketF
 const marketOptions = (selected, filter=false) =>
   '<option value="">'+(filter?'सभी मार्केट':'मार्केट नहीं चुना')+'</option>'+
   (filter && activeShops().some(s=>!s.market_id)?'<option value="unassigned"'+(selected==='unassigned'?' selected':'')+'>बिना मार्केट</option>':'')+
-  ledger.markets.map(m=>'<option value="'+escape(m.id)+'"'+(m.id===selected?' selected':'')+'>'+escape(m.name)+'</option>').join('');
+  activeMarkets().map(m=>'<option value="'+escape(m.id)+'"'+(m.id===selected?' selected':'')+'>'+escape(m.name)+'</option>').join('');
 const marketPicker = () => '<label>मार्केट<select id="market-filter">'+marketOptions(marketFilter,true)+'</select></label>';
 const tenantFor = l => ledger.tenants.find(t=>t.id===l.tenant_id);
 const lease = id => ledger.leases.find(l=>l.id===id);
@@ -245,13 +246,16 @@ function render(error = '') {
         ]));
     }
   } else if (route === 'markets') {
-    body = toolbar('मार्केट',action('market','','मार्केट जोड़ें')) + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],ledger.markets.map(m=>{
+    body = toolbar('मार्केट',action('market','','मार्केट जोड़ें')) + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],activeMarkets().map(m=>{
       const shops = activeShops().filter(s=>s.market_id===m.id);
       const blocked = shops.filter(s=>s.is_blocked).length;
       const rentable = shops.filter(s=>!s.is_blocked);
       const rented = rentable.filter(s=>occupied(s.id)).length;
       const reserved = rentable.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
-      return [escape(m.name),shops.length,rented,reserved,blocked,rentable.length-rented-reserved,action('open-market',m.id,'दुकानें देखें','shops')];
+      const canArchive = !blocked && !shops.some(s=>ledger.leases.some(l=>l.shop_id===s.id && (!l.end_month || l.end_month>=current)));
+      return [escape(m.name),shops.length,rented,reserved,blocked,rentable.length-rented-reserved,
+        action('open-market',m.id,'दुकानें देखें','shops')+' '+action('market',m.id,'मार्केट संपादित करें')+
+        (canArchive?' '+action('archive-market',m.id,'मार्केट हटाएँ'):'')];
     }));
   } else if (route === 'shops') {
     body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],activeShops().filter(inMarket).map(s=>[
@@ -392,7 +396,7 @@ function render(error = '') {
     const monthRent = rentRows(current);
     const advance = ledger.payments.filter(p=>p.month!=='opening' && p.month>current).reduce((sum,p)=>sum+p.amount,0);
     const counts = new Intl.NumberFormat('hi-IN');
-    const charts = chartPanel('मार्केट और दुकानें · '+counts.format(ledger.markets.length)+' मार्केट',[
+    const charts = chartPanel('मार्केट और दुकानें · '+counts.format(activeMarkets().length)+' मार्केट',[
       ['किराये पर',rented,'#34d399'],['खाली',rentable.length-rented-reserved,'#60a5fa'],
       ['आगे के लिए आवंटित',reserved,'#fbbf24'],['स्वयं उपयोग',blocked,'#a78bfa']
     ],value=>counts.format(value)) +
@@ -417,7 +421,7 @@ function render(error = '') {
       metrics.map(([name,value])=>'<div class="metric">'+name+'<strong>'+money(value)+'</strong></div>').join('')+'</div></section>'+
       '<div class="rent-charts">'+charts+'</div>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
-      '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
+      '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+activeMarkets().length+'</strong></a>'+
       '<a class="button" href="#shops">दुकानें <strong>'+activeShops().length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
       '</div>';
     const hands = ['hour','minute','second'].map(name=>document.querySelector('#clock-'+name));
@@ -545,10 +549,20 @@ root.addEventListener('click',event=>{
       'tenant-status',()=>({id,is_active:nextActive}),nextActive?'सक्रिय करें':'निष्क्रिय करें');
   }
   if (name==='market') {
-    dialog('मार्केट जोड़ें',
-      '<label>मार्केट का नाम<input name="name" maxlength="120" required></label>'+
-      '<label>मार्केट कोड<input name="prefix" maxlength="12" pattern="[A-Za-z0-9]{1,12}" placeholder="जैसे BZ" required></label>',
-      'markets',values=>values,'मार्केट जोड़ें');
+    const market = activeMarkets().find(m=>m.id===id);
+    if (id && !market) return;
+    dialog(market?'मार्केट संपादित करें':'मार्केट जोड़ें',
+      '<label>मार्केट का नाम<input name="name" maxlength="120" value="'+escape(market?.name)+'" required></label>'+
+      (market?'<p>मार्केट कोड · '+escape(market.prefix)+'</p>':
+        '<label>मार्केट कोड<input name="prefix" maxlength="12" pattern="[A-Za-z0-9]{1,12}" placeholder="जैसे BZ" required></label>'),
+      'markets',values=>({...values,id:market?.id}),market?'नाम सेव करें':'मार्केट जोड़ें');
+  }
+  if (name==='archive-market') {
+    const market = activeMarkets().find(m=>m.id===id);
+    if (!market) return;
+    dialog('मार्केट हटाएँ',
+      '<p>'+escape(market.name)+'</p><p>यह मार्केट और इसकी दुकानें सूची व नए आवंटन से हट जाएँगी। पुराने किराये और रसीदों का रिकॉर्ड सुरक्षित रहेगा।</p>',
+      'archive-market',()=>({id}),'मार्केट हटाएँ');
   }
   if (name==='archive-shop') {
     const s = shop(id);
@@ -603,11 +617,11 @@ root.addEventListener('click',event=>{
     const tenantOptions = tenants=>'<option value="">किरायेदार चुनें</option>'+
       tenants.map(t=>'<option value="'+escape(t.id)+'">'+escape(t.name+(t.phone?' · '+formatMobile(t.phone):''))+'</option>').join('');
     dialog('दुकान आवंटित करें','<label>किरायेदार का मार्केट<select name="tenant_market"><option value="">सभी मार्केट</option>'+
-      ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
+      activeMarkets().map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       '<option value="unallocated">बिना चालू आवंटन</option></select></label><label>किरायेदार<select name="tenant_id" required>'+
       tenantOptions(ledger.tenants.filter(t=>t.is_active))+
       '</select></label><label>मार्केट<select name="market_id" required><option value="">मार्केट चुनें</option>'+
-      ledger.markets.map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
+      activeMarkets().map(m=>'<option value="'+escape(m.id)+'">'+escape(m.name)+'</option>').join('')+
       (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
       '<fieldset><legend>दुकानें चुनें</legend><div id="allocation-shops">पहले मार्केट चुनें</div></fieldset>'+
 

@@ -85,21 +85,32 @@ export async function onRequest({request,env}) {
       await db.prepare('DELETE FROM sessions WHERE id=?').bind(id).run();
       return send({ok:true},200,'');
     }
-    if (['ledger','shops','archive-shop','edit-allocation','leases'].includes(route)) {
+    if (['ledger','markets','archive-market','shops','archive-shop','edit-allocation','leases'].includes(route)) {
+      await db.prepare('CREATE TABLE IF NOT EXISTS archived_markets (market_id TEXT PRIMARY KEY REFERENCES markets(id))').run();
       await db.prepare('CREATE TABLE IF NOT EXISTS archived_shops (shop_id TEXT PRIMARY KEY REFERENCES shops(id))').run();
     }
     if (method === 'GET' && route === 'ledger') {
       const [shops, leases, payments, markets, tenants] = await db.batch([
-        db.prepare('SELECT shops.*, archived_shops.shop_id IS NOT NULL AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id ORDER BY code COLLATE NOCASE'),
+        db.prepare('SELECT shops.*, (archived_shops.shop_id IS NOT NULL OR archived_markets.market_id IS NOT NULL) AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id LEFT JOIN archived_markets ON archived_markets.market_id=shops.market_id ORDER BY code COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
-        db.prepare('SELECT * FROM markets ORDER BY rowid'),
+        db.prepare('SELECT markets.*, archived_markets.market_id IS NOT NULL AS is_archived FROM markets LEFT JOIN archived_markets ON archived_markets.market_id=markets.id ORDER BY markets.rowid'),
         db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
     if (method === 'POST' && route === 'markets') {
       const name = text(data.name,120).normalize('NFC');
+      const marketId = text(data.id);
+      if (marketId) {
+        if (!name) return send({error:'मार्केट का नाम दर्ज करें।'},400);
+        const result = await db.prepare(`UPDATE markets SET name=? WHERE id=?
+          AND NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=markets.id)
+          AND NOT EXISTS (SELECT 1 FROM markets AS other WHERE other.id<>markets.id AND other.name=? COLLATE NOCASE)`)
+          .bind(name,marketId,name).run();
+        if (!result.meta.changes) return send({error:'मार्केट उपलब्ध नहीं है या यह नाम पहले से दर्ज है।'},409);
+        return send({ok:true});
+      }
       const prefix = text(data.prefix,12).toUpperCase();
       if (!name || !/^[A-Z0-9]{1,12}$/.test(prefix)) {
         return send({error:'मार्केट का नाम और अंग्रेज़ी अक्षरों या अंकों में कोड दर्ज करें।'},400);
@@ -108,6 +119,19 @@ export async function onRequest({request,env}) {
         SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM markets WHERE name=? COLLATE NOCASE)
         ON CONFLICT DO NOTHING`).bind(crypto.randomUUID(),name,prefix,name).run();
       if (!result.meta.changes) return send({error:'यह मार्केट नाम या कोड पहले से दर्ज है।'},409);
+      return send({ok:true});
+    }
+    if (method === 'POST' && route === 'archive-market') {
+      const result = await db.prepare(`INSERT INTO archived_markets (market_id)
+        SELECT markets.id FROM markets WHERE markets.id=?
+          AND NOT EXISTS (
+            SELECT 1 FROM shops WHERE shops.market_id=markets.id
+              AND (shops.is_blocked=1 OR EXISTS (
+                SELECT 1 FROM leases WHERE leases.shop_id=shops.id AND (end_month IS NULL OR end_month>=?)
+              ))
+          )
+        ON CONFLICT DO NOTHING`).bind(text(data.id),day().slice(0,7)).run();
+      if (!result.meta.changes) return send({error:'मार्केट हटाने के लिए उसकी सभी दुकानें खाली होनी चाहिए।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'archive-shop') {
@@ -121,7 +145,7 @@ export async function onRequest({request,env}) {
     if (method === 'POST' && route === 'shops') {
       const number = text(data.code,40);
       const selectedMarket = data.market_id
-        ? await db.prepare('SELECT * FROM markets WHERE id=?').bind(data.market_id).first()
+        ? await db.prepare('SELECT * FROM markets WHERE id=? AND NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=markets.id)').bind(data.market_id).first()
         : null;
       if (data.market_id && !selectedMarket) return send({error:'सही मार्केट चुनें।'},400);
       const code = selectedMarket && number ? selectedMarket.prefix+'-'+number : number;
@@ -133,12 +157,13 @@ export async function onRequest({request,env}) {
             .bind(text(data.id),day().slice(0,7)).first();
           if (current) return send({error:'किरायेदारी पूरी होने तक इस दुकान को ब्लॉक नहीं किया जा सकता।'},409);
         }
-        const result = await db.prepare('UPDATE shops SET code=?, address=?, market_id=?, is_blocked=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id)')
-          .bind(code,text(data.address,240),selectedMarket?.id ?? null,blocked,text(data.id)).run();
+        const result = await db.prepare('UPDATE shops SET code=?, address=?, market_id=?, is_blocked=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id) AND NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id IN (shops.market_id,?))')
+          .bind(code,text(data.address,240),selectedMarket?.id ?? null,blocked,text(data.id),selectedMarket?.id ?? null).run();
         if (!result.meta.changes) return send({error:'दुकान नहीं मिली।'},404);
       } else {
-        await db.prepare('INSERT INTO shops (id,code,address,market_id) VALUES (?,?,?,?)')
-          .bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null).run();
+        const result = await db.prepare('INSERT INTO shops (id,code,address,market_id) SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=?)')
+          .bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null,selectedMarket?.id ?? null).run();
+        if (!result.meta.changes) return send({error:'यह मार्केट अब उपलब्ध नहीं है।'},409);
       }
       return send({ok:true});
     }
@@ -250,7 +275,8 @@ export async function onRequest({request,env}) {
         : null;
       const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?, deposit_receipt_number=?, deposit_paid_on=?
         WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
-          AND (shop_id=? OR (EXISTS (SELECT 1 FROM shops WHERE id=? AND is_blocked=0)
+          AND (shop_id=? OR (EXISTS (SELECT 1 FROM shops WHERE id=? AND is_blocked=0
+            AND NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=shops.market_id))
             AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=?)
             AND NOT EXISTS (
             SELECT 1 FROM leases AS other WHERE other.shop_id=? AND other.id<>leases.id
@@ -286,6 +312,7 @@ export async function onRequest({request,env}) {
       ), available AS (
         SELECT requested.* FROM requested JOIN shops ON shops.id=requested.shop_id
         WHERE shops.is_blocked=0
+          AND NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=shops.market_id)
           AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id)
           AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
       ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit,deposit_receipt_number,deposit_paid_on)
