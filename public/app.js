@@ -240,7 +240,7 @@ function render(error = '') {
       }));
       return;
     }
-    root.innerHTML = '<section class="login panel"><h1>प्रशासक लॉगिन</h1><p role="status">'+escape(authNotice)+'</p><form id="login"><label>पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">लॉगिन करें</button><a class="button" href="#forgot-password">पासवर्ड भूल गए?</a></form></section>';
+    root.innerHTML = '<section class="login panel"><h1>प्रशासक लॉगिन</h1><p role="status">'+escape(authNotice)+'</p><form id="login"><label>पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">लॉगिन करें</button></form></section>';
     document.querySelector('#login').addEventListener('submit',e=>submit(e,async d=>{await api('login',d);authNotice='';await load();}));
     return;
   }
