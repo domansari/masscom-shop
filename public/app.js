@@ -267,7 +267,8 @@ function render(error = '') {
         (canArchive?' '+action('archive-market',m.id,'मार्केट हटाएँ'):'')];
     }));
   } else if (route === 'shops') {
-    const headers = ['मार्केट','दुकान','पता','स्थिति','आवंटित किरायेदार',''];
+    const headers = ['मार्केट','दुकान','पता','स्थिति','आवंटित किरायेदार','चालू माह जमा / बाकी',''];
+    const currentRentByLease = new Map(rentRows(current).map(row=>[row.l.id,row]));
     const rows = activeShops().filter(inMarket).map(s=>{
       const allocations = ledger.leases.filter(l=>l.shop_id===s.id);
       const currentLease = allocations.find(l=>includesMonth(l,current));
@@ -279,10 +280,15 @@ function render(error = '') {
       const tenantDetails = tenant
         ? '<a class="button action-details" href="#tenant/'+escape(tenant.id)+'/shops">'+tenantName+'</a>'
         : tenantName;
-      const pay = allocation ? ' '+action('payment',allocation.id,'किराया जमा करें','pay') : '';
+      const paymentLease = currentLease || nextLease;
+      const pay = paymentLease ? ' '+action(tenant?.id?'tenant-payment':'payment',tenant?.id || paymentLease.id,'सभी दुकानों का किराया जमा करें','pay') : '';
+      const currentRent = currentLease ? currentRentByLease.get(currentLease.id) : null;
+      const paidStatus = currentRent
+        ? (currentRent.balance<=0?'पूरा जमा':money(currentRent.paid)+' जमा · '+money(Math.max(0,currentRent.balance))+' बाकी')
+        : '—';
       const remove = !s.is_blocked && !allocations.some(l=>!l.end_month || l.end_month>=current)
         ? ' '+action('archive-shop',s.id,'दुकान हटाएँ') : '';
-      return [escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),status,tenantDetails,
+      return [escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),status,tenantDetails,paidStatus,
         action('shop',s.id,'संपादित करें')+remove+pay];
     });
     body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(headers,rows);
@@ -364,8 +370,8 @@ function render(error = '') {
         const shops = new Set(allocations.map(l=>l.shop_id));
         const currentLease = allocations.find(isOccupied) || allocations[0];
         const hasActiveLease = ledger.leases.some(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>=current));
-        const pay = t.is_active ? (shops.size>1 ? action('tenant-payment',t.id,'किराया जमा करें','pay') :
-          currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '') : '';
+        const pay = t.is_active && currentLease
+          ? action('tenant-payment',t.id,'सभी दुकानों का किराया जमा करें','pay') : '';
         const statusAction = t.is_active
           ? (hasActiveLease ? '' : action('tenant-status',t.id,'निष्क्रिय करें','edit'))
           : action('tenant-status',t.id,'सक्रिय करें','assign') +
@@ -420,12 +426,12 @@ function render(error = '') {
       '<hr>'+toolbar('मासिक किराया','<label>किराये का महीना<select id="month">'+monthOptions+'</select></label>') +
       table(['दुकान','किरायेदार','किराया','जमा','बाकी',''],rentRows(month).filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.rent),money(paid),money(balance),
-        balance>0?action('payment',l.id,'किराया जमा करें','pay'):'पूरा जमा '+action('payment',l.id,'अन्य माह जमा करें','pay')
+        balance>0?action(tenantFor(l)?.id?'tenant-payment':'payment',tenantFor(l)?.id || l.id,'सभी दुकानों का किराया जमा करें','pay'):'पूरा जमा '+action(tenantFor(l)?.id?'tenant-payment':'payment',tenantFor(l)?.id || l.id,'अन्य माह जमा करें','pay')
       ]));
     body += toolbar('शुरुआती बकाया') + table(['दुकान','किरायेदार','शुरुआत में दर्ज रकम','जमा','अब बाकी',''],
       openingRows().filter(({l})=>inRentMarket(l)).map(({l,paid,balance})=>[
         escape(shopLabel(shop(l.shop_id))),escape(tenantFor(l)?.name ?? l.tenant),money(l.opening),money(paid),money(balance),
-        balance>0?action('opening-payment',l.id,'बकाया जमा करें','pay'):'पूरा जमा'
+        balance>0?action(tenantFor(l)?.id?'tenant-payment':'opening-payment',tenantFor(l)?.id || l.id,'सभी दुकानों का बकाया जमा करें','pay'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
     const receiptMonths = [...new Set(ledger.payments.map(p=>p.month))].sort((a,b)=>
@@ -849,7 +855,7 @@ function openTenantPayment(name,id) {
         '<input type="number" name="period_'+escape(l.id)+'/'+key+'" step=".01" min="0" max="'+balance/100+'"></label>';
     }).join('');
     const label = escape(shopLabel(shop(l.shop_id)));
-    return combined ? fields : '<h3>'+label+'</h3>'+fields;
+    return '<h3>'+label+'</h3>'+fields;
   }).join('');
   const months = [...new Set(paymentOptions.flatMap(({periods})=>periods.map(([key])=>key))
     .filter(key=>paymentCategory(key,current)==='advance'))].sort();
@@ -868,7 +874,7 @@ function openTenantPayment(name,id) {
     '<p id="payment-fill-status" role="status"></p>';
   const paymentId=crypto.randomUUID();
   const tenant = combined ? ledger.tenants.find(t=>t.id===id) : tenantFor(leases[0]);
-  dialog('किराया जमा करें','<p>'+escape(tenant?.name ?? leases[0].tenant)+'</p>'+
+  dialog(combined?'सभी आवंटित दुकानों का किराया जमा करें':'किराया जमा करें','<p>'+escape(tenant?.name ?? leases[0].tenant)+'</p>'+
     quickFill+'<div id="payment-period-fields" hidden>'+periodFields+'</div>'+
     '<p>कुल भुगतान <strong id="payment-total"></strong></p>'+
     '<label>रसीद नंबर<input name="receipt_number" maxlength="60" required></label>'+
