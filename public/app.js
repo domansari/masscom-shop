@@ -123,11 +123,12 @@ function tenantOutstandingData(asOf) {
     if (total<=0) continue;
     const tenant = tenantFor(l);
     const leasedShop = shop(l.shop_id);
-    if (!groups.has(l.tenant_id)) groups.set(l.tenant_id,{
-      id:l.tenant_id,name:tenant?.name||l.tenant||'—',phone:tenant?.phone||l.phone||'',
+    const groupKey = l.tenant_id ? 'tenant/'+l.tenant_id : 'lease/'+l.id;
+    if (!groups.has(groupKey)) groups.set(groupKey,{
+      id:l.tenant_id,leaseId:l.id,name:tenant?.name||l.tenant||'—',phone:tenant?.phone||l.phone||'',
       shops:[],total:0
     });
-    const group = groups.get(l.tenant_id);
+    const group = groups.get(groupKey);
     group.shops.push({
       market:marketOf(leasedShop)?.name||'बिना मार्केट',
       shop:leasedShop?shopNumber(leasedShop):'—',
@@ -311,10 +312,11 @@ function render(error = '') {
     ).join('');
     const dueMonthPicker = '<label>बकाया स्थिति माह<select data-tenant-due-month>'+dueMonthOptions+'</select></label>';
     tenantDueRows = tenantOutstandingData(tenantDueMonth);
-    const tenantDueTable = () => table(['क्र.','किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया'],tenantDueRows.map((row,index)=>[
+    const tenantDueTable = () => table(['क्र.','किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया',''],tenantDueRows.map((row,index)=>[
       String(index+1),escape(row.name),escape(formatMobile(row.phone)||'—'),
       row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
-      money(row.total)
+      money(row.total),
+      action(row.id?'tenant-payment':'payment',row.id || row.leaseId,'किराया जमा करें','pay')
     ]));
     const defaultersContent = toolbar('बकायेदार',dueMonthPicker+action('print-defaulters','','A4 PDF प्रिंट / डाउनलोड करें','print'))+
       '<p>चुने गए माह तक जिन किरायेदारों का किराया बाकी है, उनकी सूची।</p>'+tenantDueTable();
