@@ -600,7 +600,7 @@ root.addEventListener('click',event=>{
       allocations.map(l=>'<option value="'+escape(l.id)+'">'+escape(shopLabel(shop(l.shop_id)))+'</option>').join('')+
       '</select></label>'+
       '<label>आवंटित दुकान बदलें<select name="shop_id" required></select></label>'+
-      '<label>मासिक किराया (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
+      '<label>मासिक किराया (₹)<input type="number" name="rent" min="0" step=".01" required></label>'+
       '<label>शुरुआती बकाया (₹)<input type="number" name="opening" min="0" step=".01" required></label>'+
       '<label>सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" required></label>',
       'edit-allocation',d=>({id:d.id,shop_id:d.shop_id,rent:minor(d.rent),opening:minor(d.opening),deposit:minor(d.deposit)}));
@@ -634,7 +634,7 @@ root.addEventListener('click',event=>{
       (options.some(s=>!s.market_id)?'<option value="unassigned">बिना मार्केट</option>':'')+'</select></label>'+
       '<fieldset><legend>दुकानें चुनें</legend><div id="allocation-shops">पहले मार्केट चुनें</div></fieldset>'+
 
-      '<label>मासिक किराया प्रति दुकान (₹)<input type="number" name="rent" min=".01" step=".01" required></label>'+
+      '<label>मासिक किराया प्रति दुकान (₹)<input type="number" name="rent" min="0" step=".01" required></label>'+
       '<label>किराया शुरू होने का महीना<select name="start_month" required><option value="">महीना चुनें</option>'+
       startMonthOptions(ledger.today)+'</select></label>'+
       '<label>शुरुआती बकाया प्रति दुकान (₹)<input type="number" name="opening" min="0" step=".01" value="0"></label>'+

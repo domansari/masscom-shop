@@ -45,6 +45,58 @@ async function verifyPassword(db,request,password,secret) {
   return null;
 }
 
+
+// D1 applies the table replacement and all index changes in one transaction.
+async function ensureZeroRent(db) {
+  const allowsZero = async () => {
+    const table = await db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='leases'").first();
+    return /CHECK\s*\(\s*rent\s*>=\s*0\s*\)/i.test(table?.sql || '');
+  };
+  if (await allowsZero()) return;
+  try {
+    await db.batch([
+      `CREATE TABLE leases_zero_rent (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id),
+      tenant TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      rent INTEGER NOT NULL CHECK(rent >= 0),
+      start_month TEXT NOT NULL,
+      end_month TEXT CHECK(end_month >= start_month),
+      tenant_id TEXT REFERENCES tenants(id),
+      opening INTEGER NOT NULL DEFAULT 0 CHECK(opening >= 0),
+      deposit INTEGER NOT NULL DEFAULT 0 CHECK(deposit >= 0),
+      deposit_returned_on TEXT,
+      deposit_receipt_number TEXT,
+      deposit_paid_on TEXT
+    )`,
+      `CREATE TABLE payments_zero_rent (
+      id TEXT PRIMARY KEY,
+      lease_id TEXT NOT NULL REFERENCES leases_zero_rent(id),
+      month TEXT NOT NULL,
+      amount INTEGER NOT NULL CHECK(amount > 0),
+      method TEXT NOT NULL CHECK(method IN ('Cash','UPI','Bank Transfer','Cheque')),
+      paid_on TEXT NOT NULL,
+      transaction_id TEXT,
+      receipt_group TEXT,
+      receipt_number TEXT
+    )`,
+      `INSERT INTO leases_zero_rent SELECT id,shop_id,tenant,phone,rent,start_month,end_month,tenant_id,opening,deposit,deposit_returned_on,deposit_receipt_number,deposit_paid_on FROM leases`,
+      `INSERT INTO payments_zero_rent SELECT id,lease_id,month,amount,method,paid_on,transaction_id,receipt_group,receipt_number FROM payments ORDER BY rowid`,
+      `DROP TABLE payments`,
+      `DROP TABLE leases`,
+      `ALTER TABLE leases_zero_rent RENAME TO leases`,
+      `ALTER TABLE payments_zero_rent RENAME TO payments`,
+      `CREATE UNIQUE INDEX one_current_lease ON leases(shop_id) WHERE end_month IS NULL`,
+      `CREATE INDEX leases_tenant ON leases(tenant_id)`,
+      `CREATE INDEX payment_month ON payments(lease_id,month)`,
+      `CREATE UNIQUE INDEX payments_receipt_number_unique ON payments(receipt_number COLLATE NOCASE) WHERE receipt_number IS NOT NULL`
+    ].map(statement=>db.prepare(statement)));
+  } catch (error) {
+    if (!await allowsZero()) throw error;
+  }
+}
+
 const tenantPhone = value => /^[0-9]{5}-?[0-9]{5}$/.test(value) ? value.replace('-','') : '';
 const tenantNumber = value => /^(?:[0-9]{12}|[0-9]{4}-[0-9]{4}-[0-9]{4})$/.test(value) ? value.replaceAll('-','') : '';
 const missingPhone = '0000000000';
@@ -287,7 +339,7 @@ export async function onRequest({request,env}) {
       const allocation = await db.prepare('SELECT id,shop_id,start_month,deposit,deposit_receipt_number,deposit_paid_on FROM leases WHERE id=? AND end_month IS NULL')
         .bind(text(data.id)).first();
       if (!allocation) return send({error:'यह आवंटन अब संशोधित नहीं किया जा सकता।'},409);
-      if (!shopId || !validAmount(rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+      if (!shopId || !(rent===0 || validAmount(rent)) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
         return send({error:'दुकान चुनें और किराया, शुरुआती बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
       if (shopId!==allocation.shop_id) {
@@ -304,6 +356,7 @@ export async function onRequest({request,env}) {
       const depositPaidOn = deposit>0
         ? allocation.deposit_paid_on || (allocation.deposit===0 ? day() : null)
         : null;
+      if (rent===0) await ensureZeroRent(db);
       const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?, deposit_receipt_number=?, deposit_paid_on=?
         WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
           AND (shop_id=? OR (EXISTS (SELECT 1 FROM shops WHERE id=? AND is_blocked=0
@@ -328,7 +381,7 @@ export async function onRequest({request,env}) {
       if (typeof startMonth !== 'string' || !monthValid(startMonth) || startMonth < day().slice(0,7)) {
         return send({error:'किराया शुरू होने के लिए इस महीने या आगे का कोई महीना चुनें।'},400);
       }
-      if (!tenant || tenant.is_active!==1 || !validAmount(data.rent) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
+      if (!tenant || tenant.is_active!==1 || !(data.rent===0 || validAmount(data.rent)) || ![opening,deposit].every(n=>n===0 || validAmount(n))) {
         return send({error:'किरायेदार चुनें और किराया, पिछला बकाया व सुरक्षा राशि सही दर्ज करें।'},400);
       }
       const shopIds = data.shop_ids ?? [data.shop_id];
@@ -337,6 +390,7 @@ export async function onRequest({request,env}) {
           new Set(shopIds).size!==shopIds.length) return send({error:'कम से कम एक सही दुकान चुनें।'},400);
       const requested = shopIds.map(shop_id=>({id:crypto.randomUUID(),shop_id,
         deposit_receipt_number:deposit>0?'SD-'+crypto.randomUUID().toUpperCase():null}));
+      if (data.rent===0) await ensureZeroRent(db);
       const result = await db.prepare(`WITH requested AS (
         SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.shop_id') AS shop_id,
           json_extract(value,'$.deposit_receipt_number') AS deposit_receipt_number FROM json_each(?)
