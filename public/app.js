@@ -448,7 +448,8 @@ function render(error = '') {
       ['किराया बाकी',monthRent.reduce((sum,row)=>sum+row.balance,0),'#fb7185']
     ],money) +
     chartPanel('बकाया और एडवांस',[
-      ['कुल बकाया',Math.max(0,overdue()),'#fb7185'],
+      ['पुराना बकाया',Math.max(0,overdue()),'#fb7185'],
+      ['चालू माह बकाया',Math.max(0,monthRent.reduce((sum,row)=>sum+Math.max(0,row.balance),0)),'#fbbf24'],
       ['कुल एडवांस',advance,'#60a5fa']
     ],money);
     const cards = [['किरायेदार प्रबंधन','किरायेदार जोड़ें, आवंटन करें, संदेश भेजें','♙','tenants'],
