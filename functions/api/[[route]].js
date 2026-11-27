@@ -92,15 +92,18 @@ export async function onRequest({request,env}) {
     if (['ledger','tenants','tenant-status','archive-tenant'].includes(route)) {
       await db.prepare('CREATE TABLE IF NOT EXISTS archived_tenants (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id))').run();
     }
+    if (route === 'ledger' || route === 'shops') {
+      await db.prepare('CREATE TABLE IF NOT EXISTS archived_shop_codes (shop_id TEXT PRIMARY KEY REFERENCES shops(id), code TEXT NOT NULL)').run();
+    }
     if (method === 'GET' && route === 'ledger') {
       const [shops, leases, payments, markets, tenants] = await db.batch([
-        db.prepare('SELECT shops.*, (archived_shops.shop_id IS NOT NULL OR archived_markets.market_id IS NOT NULL) AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id LEFT JOIN archived_markets ON archived_markets.market_id=shops.market_id ORDER BY code COLLATE NOCASE'),
+        db.prepare('SELECT shops.*, archived_shop_codes.code AS original_code, (archived_shops.shop_id IS NOT NULL OR archived_markets.market_id IS NOT NULL) AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id LEFT JOIN archived_markets ON archived_markets.market_id=shops.market_id LEFT JOIN archived_shop_codes ON archived_shop_codes.shop_id=shops.id ORDER BY COALESCE(archived_shop_codes.code,shops.code) COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT markets.*, archived_markets.market_id IS NOT NULL AS is_archived FROM markets LEFT JOIN archived_markets ON archived_markets.market_id=markets.id ORDER BY markets.rowid'),
         db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active, archived_tenants.tenant_id IS NOT NULL AS is_archived FROM tenants LEFT JOIN archived_tenants ON archived_tenants.tenant_id=tenants.id ORDER BY name COLLATE NOCASE')
       ]);
-      return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
+      return send({shops:shops.results.map(({original_code,...shop})=>({...shop,code:original_code ?? shop.code})), leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
     if (method === 'POST' && route === 'markets') {
       const name = text(data.name,120).normalize('NFC');
@@ -164,8 +167,20 @@ export async function onRequest({request,env}) {
           .bind(code,text(data.address,240),selectedMarket?.id ?? null,blocked,text(data.id),selectedMarket?.id ?? null).run();
         if (!result.meta.changes) return send({error:'दुकान नहीं मिली।'},404);
       } else {
-        const result = await db.prepare('INSERT INTO shops (id,code,address,market_id) SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=?)')
-          .bind(crypto.randomUUID(),code,text(data.address,240),selectedMarket?.id ?? null,selectedMarket?.id ?? null).run();
+        const marketId = selectedMarket?.id ?? null;
+        // Keep the old shop ID and printed number while freeing the unique catalog code.
+        const [, , result] = await db.batch([
+          db.prepare(`INSERT INTO archived_shop_codes (shop_id,code)
+            SELECT shops.id,shops.code FROM shops WHERE shops.code=?
+              AND (EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id)
+                OR EXISTS (SELECT 1 FROM archived_markets WHERE market_id=shops.market_id))
+            ON CONFLICT DO NOTHING`).bind(code),
+          db.prepare(`UPDATE shops SET code=? || id WHERE code=?
+            AND EXISTS (SELECT 1 FROM archived_shop_codes WHERE shop_id=shops.id)`)
+            .bind('~'.repeat(64),code),
+          db.prepare('INSERT INTO shops (id,code,address,market_id) SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM archived_markets WHERE market_id=?)')
+            .bind(crypto.randomUUID(),code,text(data.address,240),marketId,marketId)
+        ]);
         if (!result.meta.changes) return send({error:'यह मार्केट अब उपलब्ध नहीं है।'},409);
       }
       return send({ok:true});
