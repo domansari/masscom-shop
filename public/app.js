@@ -227,9 +227,10 @@ function render(error = '') {
     body = '<a class="button" href="#tenants">← किरायेदार</a>';
     if (tenant) {
       const hasActiveLease = ledger.leases.some(l=>l.tenant_id===tenant.id && (!l.end_month || l.end_month>=current));
-      const statusAction = tenant.is_active && hasActiveLease ? '' :
+      const statusAction = tenant.is_archived || (tenant.is_active && hasActiveLease) ? '' :
         action('tenant-status',tenant.id,tenant.is_active?'निष्क्रिय करें':'सक्रिय करें',tenant.is_active?'edit':'assign');
-      body += toolbar(escape(tenant.name),action('tenant',tenant.id,'विवरण संपादित करें')+(statusAction?' '+statusAction:'')) +
+      body += toolbar(escape(tenant.name)+(tenant.is_archived?' · हटाए गए':''),tenant.is_archived?'':action('tenant',tenant.id,'विवरण संपादित करें')+
+        (statusAction?' '+statusAction:'')+(!tenant.is_archived && !tenant.is_active && !hasActiveLease?' '+action('archive-tenant',tenant.id,'किरायेदार हटाएँ'):'')) +
         (tenant.has_photo?'<img width="144" src="/api/tenant-photo?id='+encodeURIComponent(tenant.id)+'" alt="किरायेदार की फ़ोटो">':'') + '<p>मोबाइल नंबर · '+escape(formatMobile(tenant.phone) || '—')+'</p>'+
         '<p>पिता का नाम · '+escape(tenant.father_name || '—')+'</p>'+
         '<p>पता · '+escape(tenant.address || '—')+'</p>'+
@@ -308,8 +309,8 @@ function render(error = '') {
         row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
         money(row.total),'<button type="button" class="action-message" disabled title="WhatsApp API और संदेश टेम्पलेट लंबित हैं">संदेश भेजें</button>'
       ]));
-    const visibleTenants = ledger.tenants.filter(t=>!tenantListMarket ||
-      (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket)));
+    const visibleTenants = ledger.tenants.filter(t=>!t.is_archived && (!tenantListMarket ||
+      (tenantListMarket==='no-allocation' ? !assignedMarkets.has(t.id) : assignedMarkets.get(t.id)?.has(tenantListMarket))));
     const tenantMarketPicker = '<label>मार्केट<select id="tenant-list-market">'+marketOptions(tenantListMarket,true)+
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
     const tenantListContent = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
@@ -322,7 +323,8 @@ function render(error = '') {
           currentLease ? action('payment',currentLease.id,'किराया जमा करें','pay') : '') : '';
         const statusAction = t.is_active
           ? (hasActiveLease ? '' : action('tenant-status',t.id,'निष्क्रिय करें','edit'))
-          : action('tenant-status',t.id,'सक्रिय करें','assign');
+          : action('tenant-status',t.id,'सक्रिय करें','assign') +
+            (hasActiveLease?'':' '+action('archive-tenant',t.id,'किरायेदार हटाएँ'));
         const tenancyActions = t.is_active
           ? ' '+action('lease',t.id,'आवंटन करें','assign')+
             (allocations.some(l=>!l.end_month)?' '+action('edit-allocation',t.id,'आवंटन संशोधित करें','edit'):'')+' '+pay
@@ -539,6 +541,13 @@ root.addEventListener('click',event=>{
       'tenants',async ({photo_file,...details})=>({
         ...details,id:t?.id,photo:photo_file?.size ? await tenantPhoto(photo_file) : null
       }));
+  }
+  if (name==='archive-tenant') {
+    const tenant = ledger.tenants.find(t=>t.id===id);
+    if (!tenant || tenant.is_active || tenant.is_archived) return;
+    dialog('किरायेदार हटाएँ',
+      '<p>'+escape(tenant.name)+'</p><p>किरायेदार सूची से हट जाएगा। पुरानी किरायेदारी, भुगतान और रसीदें सुरक्षित रहेंगी।</p>',
+      'archive-tenant',()=>({id}),'किरायेदार हटाएँ');
   }
   if (name==='tenant-status') {
     const tenant=ledger.tenants.find(t=>t.id===id);

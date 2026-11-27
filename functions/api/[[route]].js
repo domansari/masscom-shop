@@ -89,13 +89,16 @@ export async function onRequest({request,env}) {
       await db.prepare('CREATE TABLE IF NOT EXISTS archived_markets (market_id TEXT PRIMARY KEY REFERENCES markets(id))').run();
       await db.prepare('CREATE TABLE IF NOT EXISTS archived_shops (shop_id TEXT PRIMARY KEY REFERENCES shops(id))').run();
     }
+    if (['ledger','tenants','tenant-status','archive-tenant'].includes(route)) {
+      await db.prepare('CREATE TABLE IF NOT EXISTS archived_tenants (tenant_id TEXT PRIMARY KEY REFERENCES tenants(id))').run();
+    }
     if (method === 'GET' && route === 'ledger') {
       const [shops, leases, payments, markets, tenants] = await db.batch([
         db.prepare('SELECT shops.*, (archived_shops.shop_id IS NOT NULL OR archived_markets.market_id IS NOT NULL) AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id LEFT JOIN archived_markets ON archived_markets.market_id=shops.market_id ORDER BY code COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT markets.*, archived_markets.market_id IS NOT NULL AS is_archived FROM markets LEFT JOIN archived_markets ON archived_markets.market_id=markets.id ORDER BY markets.rowid'),
-        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active FROM tenants ORDER BY name COLLATE NOCASE')
+        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active, archived_tenants.tenant_id IS NOT NULL AS is_archived FROM tenants LEFT JOIN archived_tenants ON archived_tenants.tenant_id=tenants.id ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
     }
@@ -227,12 +230,20 @@ export async function onRequest({request,env}) {
       const match = [tenantId,phone,missingPhone,phone,tenantIdNumber,missingNumber,tenantIdNumber];
       const result = tenantId
         ? await db.prepare(`UPDATE tenants SET name=?,phone=?,address=?,business=?,tenant_id_number=?,father_name=?,photo=COALESCE(?,photo)
-            WHERE id=? AND NOT EXISTS (${conflict})`)
+            WHERE id=? AND NOT EXISTS (SELECT 1 FROM archived_tenants WHERE tenant_id=tenants.id) AND NOT EXISTS (${conflict})`)
           .bind(name,phone,address,business,tenantIdNumber,fatherName,photo ?? null,tenantId,...match).run()
         : await db.prepare(`INSERT INTO tenants (id,name,phone,address,business,tenant_id_number,father_name,photo)
             SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (${conflict})`)
           .bind(crypto.randomUUID(),name,phone,address,business,tenantIdNumber,fatherName,photo ?? null,...match).run();
       if (!result.meta.changes) return send({error:duplicateTenant},409);
+      return send({ok:true});
+    }
+    if (method === 'POST' && route === 'archive-tenant') {
+      const result = await db.prepare(`INSERT INTO archived_tenants (tenant_id)
+        SELECT tenants.id FROM tenants WHERE tenants.id=? AND tenants.is_active=0
+          AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.tenant_id=tenants.id AND (end_month IS NULL OR end_month>=?))
+        ON CONFLICT DO NOTHING`).bind(text(data.id),day().slice(0,7)).run();
+      if (!result.meta.changes) return send({error:'सिर्फ निष्क्रिय किरायेदार हटाया जा सकता है जिसकी चालू या आगामी किरायेदारी बाकी न हो।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'tenant-status') {
@@ -247,7 +258,12 @@ export async function onRequest({request,env}) {
           .bind(tenantId,day().slice(0,7)).first();
         if (openLease) return send({error:'पहले इस किरायेदार की सभी चालू और आगे की किरायेदारियाँ समाप्त करें।'},409);
       }
-      await db.prepare('UPDATE tenants SET is_active=? WHERE id=?').bind(active,tenantId).run();
+      const result = await db.prepare(`UPDATE tenants SET is_active=? WHERE id=?
+        AND NOT EXISTS (SELECT 1 FROM archived_tenants WHERE tenant_id=tenants.id)
+        AND (?=1 OR NOT EXISTS (
+          SELECT 1 FROM leases WHERE leases.tenant_id=tenants.id AND (end_month IS NULL OR end_month>=?)
+        ))`).bind(active,tenantId,active,day().slice(0,7)).run();
+      if (!result.meta.changes) return send({error:'किरायेदार की स्थिति नहीं बदली जा सकी।'},409);
       return send({ok:true});
     }
     if (method === 'POST' && route === 'edit-allocation') {
@@ -317,8 +333,9 @@ export async function onRequest({request,env}) {
           AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
       ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit,deposit_receipt_number,deposit_paid_on)
       SELECT id,shop_id,?,?,?,?,?,?,?,deposit_receipt_number,? FROM available
-      WHERE (SELECT count(*) FROM available)=(SELECT count(*) FROM requested)`)
-        .bind(JSON.stringify(requested),startMonth,tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit,deposit>0?day():null).run();
+      WHERE (SELECT count(*) FROM available)=(SELECT count(*) FROM requested)
+        AND EXISTS (SELECT 1 FROM tenants WHERE id=? AND is_active=1)`)
+        .bind(JSON.stringify(requested),startMonth,tenant.name,tenant.phone,data.rent,startMonth,tenant.id,opening,deposit,deposit>0?day():null,tenant.id).run();
       if (!result.meta.changes) return send({error:'चुनी गई किसी दुकान का इस महीने से आवंटन उपलब्ध नहीं है। दुकानें दोबारा चुनें।'},409);
       return send({ok:true});
     }
