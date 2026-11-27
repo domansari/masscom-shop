@@ -54,6 +54,7 @@ let receiptSortDirection = 'desc';
 let marketFilter = '';
 let tenantListMarket = '';
 let rentTenantMarket = '';
+const depositReturnPasswords = new Map();
 const activeMarkets = () => ledger.markets.filter(m=>!m.is_archived);
 const activeShops = () => ledger.shops.filter(s=>!s.is_archived);
 const shop = id => ledger.shops.find(s=>s.id===id);
@@ -227,7 +228,22 @@ function render(error = '') {
   const current = ledger.today.slice(0,7);
   const isOccupied = l => l.start_month<=current && (!l.end_month || l.end_month>current);
   const occupied = id => ledger.leases.some(l=>l.shop_id===id && isOccupied(l));
-  if (route.startsWith('tenant/')) {
+  if (route.startsWith('deposit-return/')) {
+    const id=route.slice('deposit-return/'.length);
+    const l=lease(id);
+    if (!l || !l.deposit || l.deposit_returned_on) body='<p>यह सुरक्षा राशि वापसी के लिए उपलब्ध नहीं है।</p><a class="button" href="#deposits">← सुरक्षा राशि सूची</a>';
+    else if (!depositReturnPasswords.has(id)) body='<a class="button" href="#deposits">← सुरक्षा राशि सूची</a><h2>वापसी की अनुमति</h2><form id="deposit-return-auth" data-id="'+escape(id)+'"><label>एडमिनिस्ट्रेटिव पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" required autocomplete="current-password"></label><p class="error" role="alert"></p><button class="primary">पासवर्ड जाँचें</button></form>';
+    else body='<a class="button" href="#deposits">← सुरक्षा राशि सूची</a><h2>सुरक्षा राशि वापसी दर्ज करें</h2><p>'+escape(tenantFor(l)?.name||l.tenant)+' · '+escape(shopLabel(shop(l.shop_id)))+' · '+money(l.deposit)+'</p>'+action('print-return-form',id,'वापसी रसीद प्रिंट करें')+'<form id="deposit-return-form" data-id="'+escape(id)+'"><label>वापसी की तारीख<input type="date" name="returned_on" value="'+ledger.today+'" max="'+ledger.today+'" required></label><label>वापसी का विवरण<textarea name="description" maxlength="1000" rows="4" required placeholder="वापसी और किरायेदार की सहमति का विवरण"></textarea></label><label>हस्ताक्षरित रसीद संलग्न करें<input type="file" name="attachment" accept="image/jpeg,image/png,image/webp,application/pdf" required></label><p class="field-help">रसीद JPG, PNG, WebP या PDF हो सकती है। छोटी फ़ाइल चुनें, अधिकतम 180 KB।</p><p class="error" role="alert"></p><button class="primary">वापसी सेव करें</button></form>';
+  } else if (route === 'deposits') {
+    const records=ledger.leases.filter(l=>l.deposit>0).map(l=>({l,t:tenantFor(l),s:shop(l.shop_id),r:ledger.deposit_returns?.find(item=>item.lease_id===l.id)}))
+      .sort((a,b)=>(a.t?.name||a.l.tenant).localeCompare(b.t?.name||b.l.tenant,'hi') || (a.s?.code||'').localeCompare(b.s?.code||'','hi',{numeric:true}));
+    const held=records.filter(({l})=>!l.deposit_returned_on).reduce((sum,{l})=>sum+l.deposit,0);
+    body=toolbar('सुरक्षा राशि')+table(['किरायेदार','मार्केट','दुकान संख्या','जमा सुरक्षा राशि','स्थिति',''],records.map(({l,t,s,r})=>[
+      escape(t?.name||l.tenant),escape(marketOf(s)?.name||'बिना मार्केट'),escape(s?shopNumber(s):'—'),money(l.deposit),
+      l.deposit_returned_on?'वापस · '+showDate(l.deposit_returned_on):'जमा',
+      action('deposit-details',l.id,'विवरण देखें','details')+' '+(!l.deposit_returned_on?action('edit-deposit',l.id,'सुधारें','edit')+' '+action('return-deposit',l.id,'वापस करें','pay'):'')
+    ]))+'<h2>कुल सुरक्षा राशि · '+money(records.reduce((sum,{l})=>sum+l.deposit,0))+'</h2><p>वापसी बाकी · '+money(held)+'</p>';
+  } else if (route.startsWith('tenant/')) {
     const [tenantId, source] = route.slice(7).split('/');
     const tenant = ledger.tenants.find(t=>t.id===tenantId);
     body = source==='shops'
@@ -485,7 +501,8 @@ function render(error = '') {
       ['कुल एडवांस',advance,'#60a5fa']
     ],money);
     const cards = [['किरायेदार प्रबंधन','किरायेदार जोड़ें, आवंटन करें, संदेश भेजें','♙','tenants'],
-      ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts']];
+      ['मासिक किराया','किराया जमा करें और बकाया देखें','₹','rent'],['किराये की रसीदें','भुगतान देखें और रसीद प्रिंट करें','▤','receipts'],
+      ['सुरक्षा राशि','जमा, वापसी और रसीदें देखें','₹','deposits']];
     root.innerHTML = '<div class="hero dashboard-hero"><img class="dashboard-logo" src="/dashboard-logo.png" width="713" height="515" alt="लोगो"><div><h1>दुकान किराया प्रबंधन</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p></div>'+
       '<div class="dashboard-clock"><svg viewBox="0 0 80 80" aria-hidden="true"><circle class="clock-face" cx="40" cy="40" r="37"/>'+
       Array.from({length:12},(_,i)=>'<line class="clock-tick" x1="40" y1="8" x2="40" y2="'+(i%3===0?14:11)+'" transform="rotate('+i*30+' 40 40)"/>').join('')+
@@ -523,6 +540,30 @@ function render(error = '') {
     body = '<nav class="tenant-tabs" aria-label="मार्केट और दुकानें">'+tabs+'</nav>'+body;
   }
   root.innerHTML = '<div class="toolbar"><a class="button" href="#dashboard">← डैशबोर्ड</a></div><section class="panel">'+body+'</section>';
+  document.querySelector('#deposit-return-auth')?.addEventListener('submit',event=>submit(event,async ({password})=>{
+    const id=event.currentTarget.dataset.id;
+    await api('verify-admin',{password});
+    depositReturnPasswords.set(id,password);
+    render();
+  }));
+  document.querySelector('#deposit-return-form')?.addEventListener('submit',event=>submit(event,async values=>{
+    const id=event.currentTarget.dataset.id;
+    const file=values.attachment;
+    if (!file?.size) throw new Error('हस्ताक्षरित वापसी रसीद की फ़ाइल चुनें।');
+    let attachmentData;
+    let attachmentName=file.name;
+    if (file.type==='application/pdf') {
+      if (file.size>180000) throw new Error('PDF फ़ाइल 180 KB से छोटी रखें।');
+      attachmentData=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('फ़ाइल पढ़ी नहीं जा सकी।'));reader.readAsDataURL(file);});
+    } else {
+      const jpeg=await tenantPhoto(file);
+      attachmentData='data:image/jpeg;base64,'+jpeg;
+    }
+    await api('return-deposit',{id,password:depositReturnPasswords.get(id),returned_on:values.returned_on,description:values.description,attachment_data:attachmentData,attachment_name:attachmentName});
+    depositReturnPasswords.delete(id);
+    location.hash='deposits';
+    await load();
+  }));
   document.querySelectorAll('[data-tenant-tab]').forEach(button=>button.addEventListener('click',()=>{
     tenantTab=button.dataset.tenantTab;
     render();
@@ -621,6 +662,36 @@ root.addEventListener('click',event=>{
   if (name==='open-market') {
     marketFilter=id;
     location.hash='shops';
+  }
+  if (name==='deposit-details') {
+    const l=lease(id), info=ledger.deposit_returns?.find(item=>item.lease_id===id);
+    if (!l) return;
+    const tenant=tenantFor(l), s=shop(l.shop_id);
+    const fileLink=info?.attachment_name?'<p><a class="button" href="/api/deposit-return-file?id='+encodeURIComponent(id)+'" target="_blank" rel="noopener">हस्ताक्षरित वापसी रसीद · '+escape(info.attachment_name)+'</a></p>':'';
+    dialog('सुरक्षा राशि का विवरण','<p>किरायेदार · '+escape(tenant?.name||l.tenant)+'</p><p>मार्केट · '+escape(marketOf(s)?.name||'बिना मार्केट')+'</p><p>दुकान · '+escape(shopNumber(s))+'</p><p>जमा राशि · '+money(l.deposit)+'</p><p>जमा तारीख · '+(l.deposit_paid_on?showDate(l.deposit_paid_on):'पुराने रिकॉर्ड में उपलब्ध नहीं')+'</p><p>वापसी तारीख · '+(l.deposit_returned_on?showDate(l.deposit_returned_on):'वापसी बाकी')+'</p><p>वापसी विवरण · '+escape(info?.description||'—')+'</p>'+fileLink,
+      'deposit-details',()=>({id}),'बंद करें');
+    modal.querySelector('form').onsubmit=event=>{event.preventDefault();modal.close();};
+  }
+  if (name==='edit-deposit') {
+    const l=lease(id);
+    if (!l || l.deposit_returned_on) return;
+    dialog('सुरक्षा राशि सुधारें','<p>'+escape(tenantFor(l)?.name||l.tenant)+' · '+escape(shopLabel(shop(l.shop_id)))+'</p><label>जमा सुरक्षा राशि (₹)<input type="number" name="deposit" min="0" step=".01" required value="'+(l.deposit/100)+'"></label>',
+      'edit-deposit',d=>({id,deposit:minor(d.deposit)}));
+  }
+  if (name==='return-deposit') {
+    const l=lease(id);
+    if (!l || !l.deposit || l.deposit_returned_on) return;
+    modal.innerHTML='<h2>एडमिन पासवर्ड जाँच</h2><p>'+escape(tenantFor(l)?.name||l.tenant)+' · '+escape(shopLabel(shop(l.shop_id)))+' · '+money(l.deposit)+'</p><form><label>एडमिनिस्ट्रेटिव पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" required autocomplete="current-password"></label><p class="error" role="alert"></p><div class="toolbar"><button type="button" id="cancel">रद्द करें</button><button class="primary">आगे बढ़ें</button></div></form>';
+    modal.querySelector('#cancel').onclick=()=>modal.close();
+    modal.querySelector('form').onsubmit=event=>submit(event,async ({password})=>{await api('verify-admin',{password});depositReturnPasswords.set(id,password);modal.close();location.hash='deposit-return/'+encodeURIComponent(id);});
+    modal.showModal();
+  }
+  if (name==='print-return-form') {
+    const l=lease(id);
+    if (!l) return;
+    const t=tenantFor(l), s=shop(l.shop_id);
+    document.querySelector('#print').innerHTML='<article class="deposit-return-receipt"><h1>सुरक्षा राशि वापसी रसीद</h1><p>मासकॉम इन्फोटेक सॉल्यूशंस</p><p>रसीद संख्या · ____________________</p><p>वापसी की तारीख · ____________________</p><hr><p>मैं, <strong>'+escape(t?.name||l.tenant)+'</strong>, मार्केट <strong>'+escape(marketOf(s)?.name||'बिना मार्केट')+'</strong>, दुकान संख्या <strong>'+escape(shopNumber(s))+'</strong> का किरायेदार, पुष्टि करता/करती हूँ कि मुझे जमा सुरक्षा राशि <strong>'+money(l.deposit)+'</strong> पूरी प्राप्त हो गई है। इस वापसी के संबंध में मेरी सहमति है।</p><p>विवरण · __________________________________________________________________</p><p>________________________________________________________________________</p><div class="signature-row"><span>किरायेदार का हस्ताक्षर / अंगूठा निशान<br><br>________________________</span><span>प्राप्तकर्ता / अधिकृत हस्ताक्षर<br><br>________________________</span></div></article>';
+    window.print();
   }
   if (name==='import-tenants') {
     dialog('Excel से किरायेदार इम्पोर्ट करें',

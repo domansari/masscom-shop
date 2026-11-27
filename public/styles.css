@@ -175,3 +175,11 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
 
 
 .tenant-inactive{display:inline-block;margin-inline-start:6px;padding:2px 7px;border-radius:999px;background:#7f1d1d;color:#fecaca;font-size:.78em}
+
+.deposit-return-receipt{font-family:Arial,system-ui,sans-serif;color:#111;max-width:180mm;margin:0 auto}
+.deposit-return-receipt h1,.deposit-return-receipt>p:nth-child(2){text-align:center}
+.deposit-return-receipt h1{font-size:20pt;margin:0 0 2mm}
+.deposit-return-receipt p{line-height:1.7;margin:4mm 0}
+.signature-row{display:flex;justify-content:space-between;gap:15mm;margin-top:18mm;text-align:center}
+.signature-row span{width:50%}
+@media print{.deposit-return-receipt{font-size:12pt}.signature-row{break-inside:avoid}}

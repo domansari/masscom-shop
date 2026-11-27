@@ -147,15 +147,37 @@ export async function onRequest({request,env}) {
     if (route === 'ledger' || route === 'shops') {
       await db.prepare('CREATE TABLE IF NOT EXISTS archived_shop_codes (shop_id TEXT PRIMARY KEY REFERENCES shops(id), code TEXT NOT NULL)').run();
     }
+    if (route === 'ledger' || route === 'return-deposit' || route === 'deposit-return-file') {
+      await db.prepare(`CREATE TABLE IF NOT EXISTS deposit_returns (
+        lease_id TEXT PRIMARY KEY REFERENCES leases(id), returned_on TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '', attachment_data TEXT, attachment_name TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`).run();
+    }
     if (method === 'GET' && route === 'ledger') {
-      const [shops, leases, payments, markets, tenants] = await db.batch([
+      const [shops, leases, payments, markets, tenants, depositReturns] = await db.batch([
         db.prepare('SELECT shops.*, archived_shop_codes.code AS original_code, (archived_shops.shop_id IS NOT NULL OR archived_markets.market_id IS NOT NULL) AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id LEFT JOIN archived_markets ON archived_markets.market_id=shops.market_id LEFT JOIN archived_shop_codes ON archived_shop_codes.shop_id=shops.id ORDER BY COALESCE(archived_shop_codes.code,shops.code) COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT markets.*, archived_markets.market_id IS NOT NULL AS is_archived FROM markets LEFT JOIN archived_markets ON archived_markets.market_id=markets.id ORDER BY markets.rowid'),
-        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active, archived_tenants.tenant_id IS NOT NULL AS is_archived FROM tenants LEFT JOIN archived_tenants ON archived_tenants.tenant_id=tenants.id ORDER BY name COLLATE NOCASE')
+        db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active, archived_tenants.tenant_id IS NOT NULL AS is_archived FROM tenants LEFT JOIN archived_tenants ON archived_tenants.tenant_id=tenants.id ORDER BY name COLLATE NOCASE'),
+        db.prepare('SELECT lease_id,returned_on,description,attachment_name,created_at FROM deposit_returns')
       ]);
-      return send({shops:shops.results.map(({original_code,...shop})=>({...shop,code:original_code ?? shop.code})), leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
+      return send({shops:shops.results.map(({original_code,...shop})=>({...shop,code:original_code ?? shop.code})), leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, deposit_returns:depositReturns.results, today:day()});
+    }
+    if (method === 'GET' && route === 'deposit-return-file') {
+      const row = await db.prepare('SELECT attachment_data,attachment_name FROM deposit_returns WHERE lease_id=?').bind(url.searchParams.get('id')||'').first();
+      if (!row?.attachment_data) return send({error:'वापसी की रसीद नहीं मिली।'},404);
+      const match=row.attachment_data.match(/^data:([^;]+);base64,(.*)$/);
+      if (!match) return send({error:'वापसी की रसीद नहीं खुली।'},500);
+      const bytes=Uint8Array.from(atob(match[2]),character=>character.charCodeAt(0));
+      const safeName=String(row.attachment_name||'receipt').replace(/[\r\n"\\]/g,'_');
+      return new Response(bytes,{headers:{'Content-Type':match[1],'Content-Disposition':'inline; filename="'+safeName+'"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+    }
+    if (method === 'POST' && route === 'verify-admin') {
+      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      if (failure) return failure;
+      return send({ok:true});
     }
     if (method === 'POST' && route === 'markets') {
       const name = text(data.name,120).normalize('NFC');
@@ -412,13 +434,36 @@ export async function onRequest({request,env}) {
       const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
       if (failure) return failure;
     }
+    if (method === 'POST' && route === 'edit-deposit') {
+      const amount = data.deposit;
+      if (!(amount===0 || validAmount(amount))) return send({error:'सुरक्षा राशि की सही रकम दर्ज करें।'},400);
+      const result = await db.prepare(`UPDATE leases SET deposit=?,
+        deposit_receipt_number=CASE WHEN ?>0 AND deposit_receipt_number IS NULL THEN ? ELSE deposit_receipt_number END,
+        deposit_paid_on=CASE WHEN ?>0 AND deposit_paid_on IS NULL THEN ? ELSE deposit_paid_on END
+        WHERE id=? AND deposit_returned_on IS NULL AND end_month IS NULL`)
+        .bind(amount,amount,'SD-'+crypto.randomUUID().toUpperCase(),amount,day(),data.id).run();
+      if (!result.meta.changes) return send({error:'यह जमा रिकॉर्ड संशोधित नहीं हो सका। वापसी हो चुकी हो तो बदलाव नहीं किया जा सकता।'},409);
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'return-deposit') {
+      const description = text(data.description,1000);
+      const attachment = typeof data.attachment_data==='string' ? data.attachment_data : '';
+      const attachmentName = text(data.attachment_name,120);
       if (!dateValid(data.returned_on) || data.returned_on>day()) {
         return send({error:'वापसी की सही तारीख चुनें।'},400);
       }
-      const result = await db.prepare(`UPDATE leases SET deposit_returned_on=? WHERE id=?
-        AND deposit>0 AND deposit_returned_on IS NULL AND end_month IS NULL
-        AND start_month<=substr(?,1,7)`).bind(data.returned_on,data.id,data.returned_on).run();
+      if (description.length<3 || !attachment || attachment.length>260000 || !/^data:(image\/(jpeg|png|webp)|application\/pdf);base64,[A-Za-z0-9+/]+=*$/.test(attachment) || !attachmentName) {
+        return send({error:'वापसी का विवरण लिखें और हस्ताक्षरित रसीद की JPG, PNG, WebP या PDF फ़ाइल जोड़ें (छोटी फ़ाइल, अधिकतम लगभग 190 KB)।'},400);
+      }
+      const [result] = await db.batch([
+        db.prepare(`UPDATE leases SET deposit_returned_on=? WHERE id=?
+          AND deposit>0 AND deposit_returned_on IS NULL AND end_month IS NULL
+          AND start_month<=substr(?,1,7)`).bind(data.returned_on,data.id,data.returned_on),
+        db.prepare(`INSERT INTO deposit_returns (lease_id,returned_on,description,attachment_data,attachment_name)
+          SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM leases WHERE id=? AND deposit_returned_on=? AND deposit>0)
+          AND NOT EXISTS (SELECT 1 FROM deposit_returns WHERE lease_id=?)`)
+          .bind(data.id,data.returned_on,description,attachment,attachmentName,data.id,data.returned_on,data.id)
+      ]);
       if (!result.meta.changes) return send({error:'वापसी दर्ज नहीं हुई। किरायेदारी और तारीख जाँचें।'},409);
       return send({ok:true});
     }
