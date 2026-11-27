@@ -47,6 +47,10 @@ let ledger, month, clock;
 let tenantTab = 'tenants';
 let tenantDueMonth = '';
 let tenantDueRows = [];
+let receiptDateFilter = '';
+let receiptMonthFilter = '';
+let receiptSortBy = 'date';
+let receiptSortDirection = 'desc';
 let marketFilter = '';
 let tenantListMarket = '';
 let rentTenantMarket = '';
@@ -424,7 +428,29 @@ function render(error = '') {
         balance>0?action('opening-payment',l.id,'बकाया जमा करें','pay'):'पूरा जमा'
       ]));
   } else if (route === 'receipts') {
-    body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],receiptRows().filter(p=>p.items.some(item=>inMarket(shop(lease(item.lease_id).shop_id)))).map(p=>[
+    const receiptMonths = [...new Set(ledger.payments.map(p=>p.month))].sort((a,b)=>
+      (a==='opening'?-1:b==='opening'?1:b.localeCompare(a))
+    );
+    const receiptControls = marketPicker()+
+      '<label>जमा तारीख़<input id="receipt-date-filter" type="date" value="'+escape(receiptDateFilter)+'"></label>'+
+      '<label>किराये का महीना<select id="receipt-month-filter"><option value="">सभी महीने</option>'+
+      receiptMonths.map(value=>'<option value="'+escape(value)+'"'+(receiptMonthFilter===value?' selected':'')+'>'+
+        (value==='opening'?'शुरुआती बकाया':showMonth(value))+'</option>').join('')+'</select></label>'+
+      '<label>क्रमबद्ध करें<select id="receipt-sort-by"><option value="date"'+(receiptSortBy==='date'?' selected':'')+'>भुगतान तारीख़</option>'+
+      '<option value="month"'+(receiptSortBy==='month'?' selected':'')+'>किराये का महीना</option></select></label>'+
+      '<label>क्रम<select id="receipt-sort-direction"><option value="desc"'+(receiptSortDirection==='desc'?' selected':'')+'>नवीनतम पहले</option>'+
+      '<option value="asc"'+(receiptSortDirection==='asc'?' selected':'')+'>पुराने पहले</option></select></label>';
+    const receipts = receiptRows()
+      .filter(p=>p.items.some(item=>inMarket(shop(lease(item.lease_id).shop_id))))
+      .filter(p=>!receiptDateFilter || p.paid_on===receiptDateFilter)
+      .filter(p=>!receiptMonthFilter || p.items.some(item=>item.month===receiptMonthFilter))
+      .sort((a,b)=>{
+        const key = p=>receiptSortBy==='date' ? p.paid_on :
+          p.items.map(item=>item.month==='opening'?'0000-00':item.month).sort()[0] || '';
+        const order = key(a).localeCompare(key(b));
+        return (receiptSortDirection==='asc'?1:-1)*(order || a.paid_on.localeCompare(b.paid_on));
+      });
+    body = toolbar('किराये की रसीदें',receiptControls) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],receipts.map(p=>[
       showDate(p.paid_on),[...new Set(p.items.map(item=>escape(shopLabel(shop(lease(item.lease_id).shop_id)))))].join('<br>'),escape(lease(p.lease_id).tenant),
       p.items.map(paymentPeriod).join(' · '),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('edit-receipt',p.id,'रसीद संपादित करें','edit')+' '+action('print',p.id,'प्रिंट करें')
     ]));
@@ -517,6 +543,26 @@ function render(error = '') {
     document.querySelector('#tenant-list-market')?.focus();
   });
   document.querySelector('#market-filter')?.addEventListener('change',event=>{marketFilter=event.target.value;render();});
+  document.querySelector('#receipt-date-filter')?.addEventListener('change',event=>{
+    receiptDateFilter=event.target.value;
+    render();
+    document.querySelector('#receipt-date-filter')?.focus();
+  });
+  document.querySelector('#receipt-month-filter')?.addEventListener('change',event=>{
+    receiptMonthFilter=event.target.value;
+    render();
+    document.querySelector('#receipt-month-filter')?.focus();
+  });
+  document.querySelector('#receipt-sort-by')?.addEventListener('change',event=>{
+    receiptSortBy=event.target.value;
+    render();
+    document.querySelector('#receipt-sort-by')?.focus();
+  });
+  document.querySelector('#receipt-sort-direction')?.addEventListener('change',event=>{
+    receiptSortDirection=event.target.value;
+    render();
+    document.querySelector('#receipt-sort-direction')?.focus();
+  });
   document.querySelector('#month')?.addEventListener('change',event=>{
     if (event.target.validity.valid && event.target.value) {month=event.target.value;render();}
   });
