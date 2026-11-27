@@ -50,6 +50,7 @@ let tenantDueRows = [];
 let marketFilter = '';
 let tenantListMarket = '';
 let rentTenantMarket = '';
+const activeShops = () => ledger.shops.filter(s=>!s.is_archived);
 const shop = id => ledger.shops.find(s=>s.id===id);
 const marketOf = s => ledger.markets.find(m=>m.id===s.market_id);
 const shopNumber = s => marketOf(s) ? s.code.slice(marketOf(s).prefix.length+1) : s.code;
@@ -57,7 +58,7 @@ const shopLabel = s => marketOf(s) ? marketOf(s).name+' · '+shopNumber(s) : s.c
 const inMarket = s => !marketFilter || (s.market_id || 'unassigned') === marketFilter;
 const marketOptions = (selected, filter=false) =>
   '<option value="">'+(filter?'सभी मार्केट':'मार्केट नहीं चुना')+'</option>'+
-  (filter && ledger.shops.some(s=>!s.market_id)?'<option value="unassigned"'+(selected==='unassigned'?' selected':'')+'>बिना मार्केट</option>':'')+
+  (filter && activeShops().some(s=>!s.market_id)?'<option value="unassigned"'+(selected==='unassigned'?' selected':'')+'>बिना मार्केट</option>':'')+
   ledger.markets.map(m=>'<option value="'+escape(m.id)+'"'+(m.id===selected?' selected':'')+'>'+escape(m.name)+'</option>').join('');
 const marketPicker = () => '<label>मार्केट<select id="market-filter">'+marketOptions(marketFilter,true)+'</select></label>';
 const tenantFor = l => ledger.tenants.find(t=>t.id===l.tenant_id);
@@ -244,8 +245,8 @@ function render(error = '') {
         ]));
     }
   } else if (route === 'markets') {
-    body = toolbar('मार्केट') + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],ledger.markets.map(m=>{
-      const shops = ledger.shops.filter(s=>s.market_id===m.id);
+    body = toolbar('मार्केट',action('market','','मार्केट जोड़ें')) + table(['मार्केट','कुल दुकानें','किराये पर','आगे के लिए आवंटित','स्वयं उपयोग','खाली',''],ledger.markets.map(m=>{
+      const shops = activeShops().filter(s=>s.market_id===m.id);
       const blocked = shops.filter(s=>s.is_blocked).length;
       const rentable = shops.filter(s=>!s.is_blocked);
       const rented = rentable.filter(s=>occupied(s.id)).length;
@@ -253,9 +254,11 @@ function render(error = '') {
       return [escape(m.name),shops.length,rented,reserved,blocked,rentable.length-rented-reserved,action('open-market',m.id,'दुकानें देखें','shops')];
     }));
   } else if (route === 'shops') {
-    body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],ledger.shops.filter(inMarket).map(s=>[
+    body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],activeShops().filter(inMarket).map(s=>[
       escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),s.is_blocked?'स्वयं उपयोग (ब्लॉक)':occupied(s.id)?'किराये पर':ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)?'आगे के लिए आवंटित':'खाली',
-      action('shop',s.id,'संपादित करें')
+      action('shop',s.id,'संपादित करें') +
+        (!s.is_blocked && !ledger.leases.some(l=>l.shop_id===s.id && (!l.end_month || l.end_month>=current))
+          ? ' '+action('archive-shop',s.id,'दुकान हटाएँ') : '')
     ]));
   } else if (route === 'tenants') {
     const receiptsByLease = new Map();
@@ -382,8 +385,8 @@ function render(error = '') {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
     const metrics = [['आज की वसूली',collected(ledger.today)],['इस महीने की वसूली',collected(current)],
       ['पिछले महीनों का बकाया',overdue()],['इस महीने का बाकी किराया',rentRows(current).reduce((sum,r)=>sum+r.balance,0)]];
-    const blocked = ledger.shops.filter(s=>s.is_blocked).length;
-    const rentable = ledger.shops.filter(s=>!s.is_blocked);
+    const blocked = activeShops().filter(s=>s.is_blocked).length;
+    const rentable = activeShops().filter(s=>!s.is_blocked);
     const rented = rentable.filter(s=>occupied(s.id)).length;
     const reserved = rentable.filter(s=>!occupied(s.id) && ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)).length;
     const monthRent = rentRows(current);
@@ -415,7 +418,7 @@ function render(error = '') {
       '<div class="rent-charts">'+charts+'</div>'+
       '<div class="grid dashboard-grid"><section class="card"><span class="icon" aria-hidden="true">▦</span><h2>मार्केट और दुकानें</h2>'+
       '<nav class="catalog-tabs" aria-label="मार्केट और दुकानें"><a class="button" href="#markets">मार्केट <strong>'+ledger.markets.length+'</strong></a>'+
-      '<a class="button" href="#shops">दुकानें <strong>'+ledger.shops.length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
+      '<a class="button" href="#shops">दुकानें <strong>'+activeShops().length+'</strong></a></nav></section>'+cards.map(([title,description,icon,target])=>'<a class="card" href="#'+target+'"><span class="icon" aria-hidden="true">'+icon+'</span><h2>'+title+'</h2><p>'+description+'</p></a>').join('')+
       '</div>';
     const hands = ['hour','minute','second'].map(name=>document.querySelector('#clock-'+name));
     const date = document.querySelector('#date');
@@ -541,6 +544,19 @@ root.addEventListener('click',event=>{
       '<p>'+escape(tenant.name)+'</p><p>पुराने किरायेदारी और भुगतान रिकॉर्ड सुरक्षित रहेंगे।</p>',
       'tenant-status',()=>({id,is_active:nextActive}),nextActive?'सक्रिय करें':'निष्क्रिय करें');
   }
+  if (name==='market') {
+    dialog('मार्केट जोड़ें',
+      '<label>मार्केट का नाम<input name="name" maxlength="120" required></label>'+
+      '<label>मार्केट कोड<input name="prefix" maxlength="12" pattern="[A-Za-z0-9]{1,12}" placeholder="जैसे BZ" required></label>',
+      'markets',values=>values,'मार्केट जोड़ें');
+  }
+  if (name==='archive-shop') {
+    const s = shop(id);
+    if (!s || s.is_archived) return;
+    dialog('दुकान हटाएँ',
+      '<p>'+escape(shopLabel(s))+'</p><p>दुकान सूची और नए आवंटन से हट जाएगी। पुरानी किरायेदारी, भुगतान और रसीदें सुरक्षित रहेंगी।</p>',
+      'archive-shop',()=>({id}),'दुकान हटाएँ');
+  }
   if (name==='shop') {
     const s=shop(id);
     const hasUnfinishedLease = s && ledger.leases.some(l=>l.shop_id===s.id &&
@@ -571,7 +587,7 @@ root.addEventListener('click',event=>{
     const populate = ()=>{
       const allocation = lease(picker.value);
       for (const field of ['rent','opening','deposit']) form.elements.namedItem(field).value=allocation[field]/100;
-      const availableShops = ledger.shops.filter(s=>(!s.is_blocked || s.id===allocation.shop_id) && !ledger.leases.some(other=>
+      const availableShops = activeShops().filter(s=>(!s.is_blocked || s.id===allocation.shop_id) && !ledger.leases.some(other=>
         other.id!==allocation.id && other.shop_id===s.id &&
         (!other.end_month || other.end_month>=allocation.start_month)));
       shopPicker.innerHTML=availableShops.map(s=>
@@ -583,7 +599,7 @@ root.addEventListener('click',event=>{
     populate();
   }
   if (name==='lease') {
-    const options=ledger.shops.filter(s=>!s.is_blocked && !ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
+    const options=activeShops().filter(s=>!s.is_blocked && !ledger.leases.some(l=>l.shop_id===s.id&&!l.end_month));
     const tenantOptions = tenants=>'<option value="">किरायेदार चुनें</option>'+
       tenants.map(t=>'<option value="'+escape(t.id)+'">'+escape(t.name+(t.phone?' · '+formatMobile(t.phone):''))+'</option>').join('');
     dialog('दुकान आवंटित करें','<label>किरायेदार का मार्केट<select name="tenant_market"><option value="">सभी मार्केट</option>'+

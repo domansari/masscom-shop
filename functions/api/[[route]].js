@@ -85,15 +85,38 @@ export async function onRequest({request,env}) {
       await db.prepare('DELETE FROM sessions WHERE id=?').bind(id).run();
       return send({ok:true},200,'');
     }
+    if (['ledger','shops','archive-shop','edit-allocation','leases'].includes(route)) {
+      await db.prepare('CREATE TABLE IF NOT EXISTS archived_shops (shop_id TEXT PRIMARY KEY REFERENCES shops(id))').run();
+    }
     if (method === 'GET' && route === 'ledger') {
       const [shops, leases, payments, markets, tenants] = await db.batch([
-        db.prepare('SELECT * FROM shops ORDER BY code COLLATE NOCASE'),
+        db.prepare('SELECT shops.*, archived_shops.shop_id IS NOT NULL AS is_archived FROM shops LEFT JOIN archived_shops ON archived_shops.shop_id=shops.id ORDER BY code COLLATE NOCASE'),
         db.prepare('SELECT * FROM leases ORDER BY start_month DESC'),
         db.prepare('SELECT * FROM payments ORDER BY paid_on DESC, rowid DESC'),
         db.prepare('SELECT * FROM markets ORDER BY rowid'),
         db.prepare('SELECT id,name,father_name,phone,address,business,tenant_id_number,photo IS NOT NULL AS has_photo,is_active FROM tenants ORDER BY name COLLATE NOCASE')
       ]);
       return send({shops:shops.results, leases:leases.results, payments:payments.results, markets:markets.results, tenants:tenants.results, today:day()});
+    }
+    if (method === 'POST' && route === 'markets') {
+      const name = text(data.name,120).normalize('NFC');
+      const prefix = text(data.prefix,12).toUpperCase();
+      if (!name || !/^[A-Z0-9]{1,12}$/.test(prefix)) {
+        return send({error:'मार्केट का नाम और अंग्रेज़ी अक्षरों या अंकों में कोड दर्ज करें।'},400);
+      }
+      const result = await db.prepare(`INSERT INTO markets (id,name,prefix)
+        SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM markets WHERE name=? COLLATE NOCASE)
+        ON CONFLICT DO NOTHING`).bind(crypto.randomUUID(),name,prefix,name).run();
+      if (!result.meta.changes) return send({error:'यह मार्केट नाम या कोड पहले से दर्ज है।'},409);
+      return send({ok:true});
+    }
+    if (method === 'POST' && route === 'archive-shop') {
+      const result = await db.prepare(`INSERT INTO archived_shops (shop_id)
+        SELECT shops.id FROM shops WHERE shops.id=? AND shops.is_blocked=0
+          AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=shops.id AND (end_month IS NULL OR end_month>=?))
+        ON CONFLICT DO NOTHING`).bind(text(data.id),day().slice(0,7)).run();
+      if (!result.meta.changes) return send({error:'सिर्फ खाली और बिना आगामी आवंटन वाली दुकान हटाई जा सकती है।'},409);
+      return send({ok:true});
     }
     if (method === 'POST' && route === 'shops') {
       const number = text(data.code,40);
@@ -110,7 +133,7 @@ export async function onRequest({request,env}) {
             .bind(text(data.id),day().slice(0,7)).first();
           if (current) return send({error:'किरायेदारी पूरी होने तक इस दुकान को ब्लॉक नहीं किया जा सकता।'},409);
         }
-        const result = await db.prepare('UPDATE shops SET code=?, address=?, market_id=?, is_blocked=? WHERE id=?')
+        const result = await db.prepare('UPDATE shops SET code=?, address=?, market_id=?, is_blocked=? WHERE id=? AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id)')
           .bind(code,text(data.address,240),selectedMarket?.id ?? null,blocked,text(data.id)).run();
         if (!result.meta.changes) return send({error:'दुकान नहीं मिली।'},404);
       } else {
@@ -227,14 +250,16 @@ export async function onRequest({request,env}) {
         : null;
       const result = await db.prepare(`UPDATE leases SET shop_id=?, rent=?, opening=?, deposit=?, deposit_receipt_number=?, deposit_paid_on=?
         WHERE id=? AND end_month IS NULL AND (deposit_returned_on IS NULL OR deposit=?)
-          AND (shop_id=? OR NOT EXISTS (
+          AND (shop_id=? OR (EXISTS (SELECT 1 FROM shops WHERE id=? AND is_blocked=0)
+            AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=?)
+            AND NOT EXISTS (
             SELECT 1 FROM leases AS other WHERE other.shop_id=? AND other.id<>leases.id
               AND (other.end_month IS NULL OR other.end_month>=leases.start_month)
-          ))
+          )))
           AND NOT EXISTS (
             SELECT 1 FROM payments WHERE lease_id=leases.id GROUP BY month
             HAVING SUM(amount)>CASE WHEN month='opening' THEN ? ELSE ? END
-          )`).bind(shopId,rent,opening,deposit,depositReceiptNumber,depositPaidOn,text(data.id),deposit,shopId,shopId,opening,rent).run();
+          )`).bind(shopId,rent,opening,deposit,depositReceiptNumber,depositPaidOn,text(data.id),deposit,shopId,shopId,shopId,shopId,opening,rent).run();
       if (!result.meta.changes) return send({error:'आवंटन बंद है, दुकान उपलब्ध नहीं है, राशि दर्ज भुगतान से कम है या सुरक्षा राशि पहले ही लौटाई जा चुकी है।'},409);
       return send({ok:true});
     }
@@ -261,6 +286,7 @@ export async function onRequest({request,env}) {
       ), available AS (
         SELECT requested.* FROM requested JOIN shops ON shops.id=requested.shop_id
         WHERE shops.is_blocked=0
+          AND NOT EXISTS (SELECT 1 FROM archived_shops WHERE shop_id=shops.id)
           AND NOT EXISTS (SELECT 1 FROM leases WHERE leases.shop_id=requested.shop_id AND (end_month IS NULL OR end_month>=?))
       ) INSERT INTO leases (id,shop_id,tenant,phone,rent,start_month,tenant_id,opening,deposit,deposit_receipt_number,deposit_paid_on)
       SELECT id,shop_id,?,?,?,?,?,?,?,deposit_receipt_number,? FROM available
