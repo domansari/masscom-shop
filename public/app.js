@@ -48,6 +48,7 @@ let authNotice = '';
 let tenantTab = 'tenants';
 let tenantDueMonth = '';
 let tenantDueRows = [];
+let messageStatus = '';
 let receiptDateFilter = '';
 let receiptMonthFilter = '';
 let receiptSortBy = 'date';
@@ -370,11 +371,11 @@ function render(error = '') {
     const defaultersContent = toolbar('बकायेदार',dueMonthPicker+action('print-defaulters','','A4 PDF प्रिंट / डाउनलोड करें','print'))+
       '<p>चुने गए माह तक जिन किरायेदारों का किराया बाकी है, उनकी सूची।</p>'+tenantDueTable();
     const messageContent = toolbar('संदेश भेजें',dueMonthPicker)+
-      '<p role="status">WhatsApp API और संदेश टेम्पलेट सेटअप लंबित है। भेजने का बटन सेटअप पूरा होने के बाद चालू होगा।</p>'+
+      '<p role="status">'+escape(messageStatus || 'चुने गए माह तक बकाया रखने वाले किरायेदारों को rent_reminder_hi संदेश भेजें।')+'</p>'+
       table(['किरायेदार','मोबाइल नंबर','मार्केट और दुकानें','कुल बकाया','संदेश'],tenantDueRows.map(row=>[
         escape(row.name),escape(formatMobile(row.phone)||'—'),
         row.shops.map(item=>escape(item.market)+' — दुकान '+escape(item.shop)+' ('+money(item.amount)+')').join('<br>'),
-        money(row.total),'<button type="button" class="action-message" disabled title="WhatsApp API और संदेश टेम्पलेट लंबित हैं">संदेश भेजें</button>'
+        money(row.total),'<button type="button" class="action-message" data-action="send-rent-reminder" data-id="'+escape(row.id||row.leaseId)+'" data-kind="'+(row.id?'tenant':'lease')+'">संदेश भेजें</button>'
       ]));
     const marketOrder = new Map(activeMarkets().map((market,index)=>[market.id,index]));
     const shopNumberOrder = new Intl.Collator('hi-IN',{numeric:true,sensitivity:'base'});
@@ -613,6 +614,7 @@ function render(error = '') {
   document.querySelectorAll('[data-tenant-due-month]').forEach(select=>select.addEventListener('change',event=>{
     if (!event.target.value) return;
     tenantDueMonth=event.target.value;
+    messageStatus='';
     render();
     document.querySelector('[data-tenant-due-month]')?.focus();
   }));
@@ -694,6 +696,22 @@ root.addEventListener('click',event=>{
   if (name==='open-market') {
     marketFilter=id;
     location.hash='shops';
+  }
+  if (name==='send-rent-reminder') {
+    const row=tenantDueRows.find(item=>(button.dataset.kind==='tenant'?item.id:item.leaseId)===id);
+    if (!row || !window.confirm(row.name+' को '+money(row.total)+' के बकाया किराये का WhatsApp संदेश भेजें?')) return;
+    button.disabled=true;
+    button.textContent='भेजा जा रहा है…';
+    messageStatus='WhatsApp संदेश भेजा जा रहा है…';
+    try {
+      await api('send-rent-reminder',{id,kind:button.dataset.kind,as_of:tenantDueMonth});
+      messageStatus=row.name+' को WhatsApp बकाया संदेश भेज दिया गया।';
+      await load();
+    } catch (error) {
+      messageStatus=error.message;
+      render();
+    }
+    return;
   }
   if (name==='deposit-details') {
     const l=lease(id), info=ledger.deposit_returns?.find(item=>item.lease_id===id);
