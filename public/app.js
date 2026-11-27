@@ -366,7 +366,7 @@ function render(error = '') {
       '<option value="no-allocation"'+(tenantListMarket==='no-allocation'?' selected':'')+'>बिना आवंटन</option></select></label>';
     const tenantListContent = toolbar('किरायेदार',tenantMarketPicker+action('tenant','','किरायेदार जोड़ें','add-tenant')+' '+action('lease','','आवंटन करें','assign')+' '+action('import-tenants','','Excel इम्पोर्ट','import')+' <a class="button action-template" href="/kirayedaar-import-template.xlsx?v=father1" download>Excel टेम्पलेट</a>') +
       table(['किरायेदार','पिता का नाम','मोबाइल नंबर','अभी किराये पर ली गई दुकानें',''],visibleTenants.map(t=>{
-        const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>current));
+        const allocations = ledger.leases.filter(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>=current));
         const shops = new Set(allocations.map(l=>l.shop_id));
         const currentLease = allocations.find(isOccupied) || allocations[0];
         const hasActiveLease = ledger.leases.some(l=>l.tenant_id===t.id && (!l.end_month || l.end_month>=current));
