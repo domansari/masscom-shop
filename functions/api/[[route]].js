@@ -433,6 +433,46 @@ export async function onRequest({request,env}) {
       if (!result.meta.changes) return send({error:'अंतिम महीना, शुरुआती महीने और दर्ज भुगतानों के महीनों से पहले का नहीं हो सकता।'},409);
       return send({ok:true});
     }
+    if (method === 'POST' && route === 'edit-receipt') {
+      const id = text(data.id);
+      const receiptNumber = typeof data.receipt_number==='string' ? data.receipt_number.trim() : '';
+      const transactionId = typeof data.transaction_id==='string' ? data.transaction_id.trim() : '';
+      const items = data.items;
+      if (!id || receiptNumber.length>60 || !dateValid(data.paid_on) || data.paid_on>day() ||
+          !['Cash','UPI','Bank Transfer','Cheque'].includes(data.method) ||
+          (data.method==='UPI' && (!transactionId || transactionId.length>100)) ||
+          !Array.isArray(items) || !items.length || items.length>1200 ||
+          items.some(item=>!item || typeof item.id!=='string' || !item.id || !validAmount(item.amount)) ||
+          new Set(items.map(item=>item.id)).size!==items.length) {
+        return send({error:'रसीद की राशि, तारीख और भुगतान का विवरण जाँचें।'},400);
+      }
+      const result = await db.prepare(`WITH requested AS (
+        SELECT json_extract(value,'$.id') AS id, json_extract(value,'$.amount') AS amount
+        FROM json_each(?)
+      ), receipt AS MATERIALIZED (
+        SELECT p.id,p.lease_id,p.month FROM payments AS p
+        WHERE p.receipt_group=? OR (p.receipt_group IS NULL AND p.id=?)
+      ), totals AS (
+        SELECT receipt.lease_id,receipt.month,SUM(requested.amount) AS amount
+        FROM receipt JOIN requested USING(id) GROUP BY receipt.lease_id,receipt.month
+      )
+      UPDATE payments SET amount=(SELECT amount FROM requested WHERE requested.id=payments.id),
+        method=?,paid_on=?,transaction_id=?,receipt_number=CASE WHEN id=? THEN ? END
+      WHERE id IN (SELECT id FROM receipt)
+        AND (SELECT COUNT(*) FROM receipt JOIN requested USING(id))=(SELECT COUNT(*) FROM requested)
+        AND (SELECT COUNT(*) FROM receipt)=(SELECT COUNT(*) FROM requested)
+        AND NOT EXISTS (
+          SELECT 1 FROM totals JOIN leases ON leases.id=totals.lease_id
+          WHERE totals.amount + COALESCE((
+            SELECT SUM(other.amount) FROM payments AS other
+            WHERE other.lease_id=totals.lease_id AND other.month=totals.month
+              AND other.id NOT IN (SELECT id FROM receipt)
+          ),0) > CASE WHEN totals.month='opening' THEN leases.opening ELSE leases.rent END
+        )`)
+        .bind(JSON.stringify(items),id,id,data.method,data.paid_on,data.method==='UPI'?transactionId:null,id,receiptNumber || null).run();
+      if (!result.meta.changes) return send({error:'रसीद नहीं मिली या संशोधित राशि देय किराये से अधिक है।'},409);
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'payments') {
       const receiptNumber = typeof data.receipt_number==='string' ? data.receipt_number.trim() : '';
       if (!receiptNumber || receiptNumber.length>60) {

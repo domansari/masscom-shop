@@ -426,7 +426,7 @@ function render(error = '') {
   } else if (route === 'receipts') {
     body = toolbar('किराये की रसीदें',marketPicker()) + table(['भुगतान की तारीख','दुकान','किरायेदार','किराये का महीना','राशि','भुगतान का तरीका','ट्रांज़ैक्शन आईडी','रसीद नंबर',''],receiptRows().filter(p=>p.items.some(item=>inMarket(shop(lease(item.lease_id).shop_id)))).map(p=>[
       showDate(p.paid_on),[...new Set(p.items.map(item=>escape(shopLabel(shop(lease(item.lease_id).shop_id)))))].join('<br>'),escape(lease(p.lease_id).tenant),
-      p.items.map(paymentPeriod).join(' · '),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('print',p.id,'प्रिंट करें')
+      p.items.map(paymentPeriod).join(' · '),money(p.amount),escape(methods[p.method]),escape(p.transaction_id || '—'),escape(p.receipt_number || '—'),action('edit-receipt',p.id,'रसीद संपादित करें','edit')+' '+action('print',p.id,'प्रिंट करें')
     ]));
   } else {
     const collected = prefix => ledger.payments.filter(p=>p.paid_on.startsWith(prefix)).reduce((sum,p)=>sum+p.amount,0);
@@ -751,6 +751,31 @@ root.addEventListener('click',event=>{
       '<p>जमा तारीख · '+(l.deposit_paid_on?showDate(l.deposit_paid_on):'पुराने रिकॉर्ड में तारीख उपलब्ध नहीं')+'</p>'+
       '<h2>सुरक्षा राशि · '+money(l.deposit)+'</h2><p>अधिकृत हस्ताक्षर ____________________</p>';
     window.print();
+  }
+  if (name==='edit-receipt') {
+    const receipt = receiptRows().find(p=>p.id===id);
+    if (!receipt) return;
+    const fields = receipt.items.map((item,index)=>
+      '<label>'+escape(shopLabel(shop(lease(item.lease_id).shop_id)))+' · '+paymentPeriod(item)+' (₹)'+
+      '<input type="number" name="amount_'+index+'" min=".01" step=".01" required value="'+(item.amount/100)+'"></label>'
+    ).join('');
+    const upi = receipt.method==='UPI';
+    dialog('रसीद संपादित करें',
+      '<label>रसीद नंबर<input name="receipt_number" maxlength="60" value="'+escape(receipt.receipt_number)+'"></label>'+
+      '<label>भुगतान की तारीख<input type="date" name="paid_on" required max="'+ledger.today+'" value="'+escape(receipt.paid_on)+'"></label>'+
+      '<label>भुगतान का तरीका<select name="method">'+Object.entries(methods).map(([key,label])=>
+        '<option value="'+key+'"'+(receipt.method===key?' selected':'')+'>'+label+'</option>').join('')+'</select></label>'+
+      '<label id="edit-receipt-transaction"'+(upi?'':' hidden')+'>यूपीआई ट्रांज़ैक्शन आईडी<input name="transaction_id" maxlength="100" value="'+
+      escape(receipt.transaction_id)+'"'+(upi?' required':' disabled')+'></label>'+fields,
+      'edit-receipt',values=>({id,receipt_number:values.receipt_number,paid_on:values.paid_on,method:values.method,
+        transaction_id:values.transaction_id,items:receipt.items.map((item,index)=>({id:item.id,amount:minor(values['amount_'+index])}))}));
+    const transaction = modal.querySelector('#edit-receipt-transaction');
+    const input = transaction.querySelector('input');
+    modal.querySelector('[name="method"]').addEventListener('change',event=>{
+      const isUpi = event.target.value==='UPI';
+      transaction.hidden = input.disabled = !isUpi;
+      input.required = isUpi;
+    });
   }
   if (name==='print') {
     const p=receiptRows().find(item=>item.id===id);
