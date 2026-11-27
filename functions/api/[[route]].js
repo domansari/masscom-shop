@@ -284,6 +284,100 @@ export async function onRequest({request,env}) {
       if (failure) return failure;
       return send({ok:true});
     }
+    if (method === 'POST' && route === 'send-rent-reminder') {
+      const asOf=text(data.as_of,7);
+      if (!monthValid(asOf) || asOf>day().slice(0,7) || !['tenant','lease'].includes(data.kind) ||
+          typeof data.id!=='string' || !/^[a-f0-9-]{36}$/i.test(data.id)) {
+        return send({error:'किरायेदार और बकाया स्थिति माह दोबारा चुनें।'},400);
+      }
+      const accessToken=env.WHATSAPP_ACCESS_TOKEN;
+      const phoneNumberId=text(env.WHATSAPP_PHONE_NUMBER_ID,64);
+      const templateName=text(env.WHATSAPP_TEMPLATE_NAME || 'rent_reminder_hi',512);
+      const templateLanguage=text(env.WHATSAPP_TEMPLATE_LANGUAGE || 'hi',32);
+      const graphVersion=text(env.WHATSAPP_GRAPH_API_VERSION || 'v27.0',12);
+      if (typeof accessToken!=='string' || accessToken.length<20 || !/^\d{5,30}$/.test(phoneNumberId) ||
+          !/^[a-z0-9_]{1,512}$/.test(templateName) || !/^[a-z]{2}(?:_[A-Z]{2})?$/.test(templateLanguage) ||
+          !/^v\d+\.\d+$/.test(graphVersion)) {
+        return send({error:'WhatsApp संदेश सेवा अभी कनेक्ट नहीं है। Cloudflare में WhatsApp API secrets सेट करने के बाद फिर कोशिश करें।'},503);
+      }
+      let targetTenant=null;
+      let leases=[];
+      if (data.kind==='tenant') {
+        targetTenant=await db.prepare('SELECT id,name,phone FROM tenants WHERE id=?').bind(data.id).first();
+        if (targetTenant) leases=(await db.prepare(`SELECT leases.*,shops.code AS shop_code,markets.name AS market_name
+          FROM leases JOIN shops ON shops.id=leases.shop_id LEFT JOIN markets ON markets.id=shops.market_id
+          WHERE leases.tenant_id=? AND leases.start_month<=?`).bind(data.id,asOf).all()).results;
+      } else {
+        const anchor=await db.prepare('SELECT tenant_id FROM leases WHERE id=?').bind(data.id).first();
+        if (anchor?.tenant_id) {
+          targetTenant=await db.prepare('SELECT id,name,phone FROM tenants WHERE id=?').bind(anchor.tenant_id).first();
+          if (targetTenant) leases=(await db.prepare(`SELECT leases.*,shops.code AS shop_code,markets.name AS market_name
+            FROM leases JOIN shops ON shops.id=leases.shop_id LEFT JOIN markets ON markets.id=shops.market_id
+            WHERE leases.tenant_id=? AND leases.start_month<=?`).bind(anchor.tenant_id,asOf).all()).results;
+        } else {
+          const row=await db.prepare(`SELECT leases.*,shops.code AS shop_code,markets.name AS market_name
+            FROM leases JOIN shops ON shops.id=leases.shop_id LEFT JOIN markets ON markets.id=shops.market_id
+            WHERE leases.id=? AND leases.start_month<=?`).bind(data.id,asOf).first();
+          if (row) {
+            leases=[row];
+            targetTenant={id:null,name:row.tenant,phone:row.phone};
+          }
+        }
+      }
+      if (!targetTenant || !leases.length) return send({error:'इस किरायेदार के लिए बकाया रिकॉर्ड नहीं मिला।'},404);
+      const phone=String(targetTenant.phone||'').replace(/\D/g,'');
+      if (!/^\d{10}$/.test(phone) || /^0{10}$/.test(phone)) return send({error:'किरायेदार का सही 10 अंकों का मोबाइल नंबर दर्ज करें।'},400);
+      const duePeriods=new Map();
+      const dueShops=[];
+      for (const lease of leases) {
+        const payments=(await db.prepare('SELECT month,SUM(amount) AS amount FROM payments WHERE lease_id=? GROUP BY month').bind(lease.id).all()).results;
+        const paid=new Map(payments.map(payment=>[payment.month,Number(payment.amount)||0]));
+        let shopDue=Math.max(0,Number(lease.opening||0)-(paid.get('opening')||0));
+        if (shopDue) duePeriods.set('opening',(duePeriods.get('opening')||0)+shopDue);
+        const last=lease.end_month && lease.end_month<asOf ? lease.end_month : asOf;
+        const cursor=new Date(lease.start_month+'-01T00:00:00Z');
+        for (let period=lease.start_month;period<=last;period=cursor.toISOString().slice(0,7)) {
+          const balance=Math.max(0,Number(lease.rent)-(paid.get(period)||0));
+          if (balance) {
+            duePeriods.set(period,(duePeriods.get(period)||0)+balance);
+            shopDue+=balance;
+          }
+          cursor.setUTCMonth(cursor.getUTCMonth()+1);
+        }
+        if (shopDue) {
+          const code=String(lease.shop_code||'');
+          const prefix=code.includes('-')?code.slice(0,code.lastIndexOf('-')):'';
+          const shopNo=prefix?code.slice(prefix.length+1):code;
+          dueShops.push((lease.market_name||'बिना मार्केट')+' — दुकान नं. '+shopNo+': '+
+            (shopDue/100).toLocaleString('hi-IN',{maximumFractionDigits:2,minimumFractionDigits:0}));
+        }
+      }
+      const total=[...duePeriods.values()].reduce((sum,value)=>sum+value,0);
+      if (!total) return send({error:'इस किरायेदार का चुने गए माह तक कोई बकाया नहीं है।'},409);
+      const months=[...duePeriods.keys()].filter(value=>value!=='opening').sort();
+      const monthLabel=value=>new Intl.DateTimeFormat('hi-IN',{timeZone:'UTC',month:'long',year:'numeric'}).format(new Date(value+'-01T00:00:00Z'));
+      const range=months.length>1 ? monthLabel(months[0])+' से '+monthLabel(months[months.length-1]) :
+        months.length===1 ? monthLabel(months[0]) : '';
+      const periodLabel=(duePeriods.has('opening')?'शुरुआती बकाया':'')+
+        (duePeriods.has('opening')&&range?' एवं ':'')+range;
+      const periodCount=months.length+(duePeriods.has('opening')?1:0);
+      const shopList=dueShops.join('; ').slice(0,700);
+      const parameters=[targetTenant.name,shopList,
+        (total/100).toLocaleString('hi-IN',{maximumFractionDigits:2,minimumFractionDigits:0}),periodLabel,String(periodCount)];
+      const response=await fetch('https://graph.facebook.com/'+graphVersion+'/'+phoneNumberId+'/messages',{
+        method:'POST',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},
+        body:JSON.stringify({messaging_product:'whatsapp',recipient_type:'individual',to:'91'+phone,
+          type:'template',template:{name:templateName,language:{code:templateLanguage},components:[{
+            type:'body',parameters:parameters.map(value=>({type:'text',text:String(value)}))
+          }]}})
+      });
+      const result=await response.json().catch(()=>({}));
+      if (!response.ok || result.error || !result.messages?.[0]?.id) {
+        console.error('WhatsApp rent reminder rejected',response.status,result.error?.code||'unknown');
+        return send({error:'WhatsApp संदेश नहीं भेजा गया। नंबर, template approval और API access token जाँचें।'},502);
+      }
+      return send({ok:true,message_id:result.messages[0].id});
+    }
     if (method === 'POST' && route === 'markets') {
       const name = text(data.name,120).normalize('NFC');
       const marketId = text(data.id);
