@@ -223,8 +223,11 @@ function render(error = '') {
   const isOccupied = l => l.start_month<=current && (!l.end_month || l.end_month>current);
   const occupied = id => ledger.leases.some(l=>l.shop_id===id && isOccupied(l));
   if (route.startsWith('tenant/')) {
-    const tenant = ledger.tenants.find(t=>t.id===route.slice(7));
-    body = '<a class="button" href="#tenants">← किरायेदार</a>';
+    const [tenantId, source] = route.slice(7).split('/');
+    const tenant = ledger.tenants.find(t=>t.id===tenantId);
+    body = source==='shops'
+      ? '<a class="button" href="#shops">← दुकानें</a>'
+      : '<a class="button" href="#tenants">← किरायेदार</a>';
     if (tenant) {
       const hasActiveLease = ledger.leases.some(l=>l.tenant_id===tenant.id && (!l.end_month || l.end_month>=current));
       const statusAction = tenant.is_archived || (tenant.is_active && hasActiveLease) ? '' :
@@ -259,12 +262,25 @@ function render(error = '') {
         (canArchive?' '+action('archive-market',m.id,'मार्केट हटाएँ'):'')];
     }));
   } else if (route === 'shops') {
-    body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(['मार्केट','दुकान','पता','स्थिति',''],activeShops().filter(inMarket).map(s=>[
-      escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),s.is_blocked?'स्वयं उपयोग (ब्लॉक)':occupied(s.id)?'किराये पर':ledger.leases.some(l=>l.shop_id===s.id && l.start_month>current)?'आगे के लिए आवंटित':'खाली',
-      action('shop',s.id,'संपादित करें') +
-        (!s.is_blocked && !ledger.leases.some(l=>l.shop_id===s.id && (!l.end_month || l.end_month>=current))
-          ? ' '+action('archive-shop',s.id,'दुकान हटाएँ') : '')
-    ]));
+    const headers = ['मार्केट','दुकान','पता','स्थिति','आवंटित किरायेदार',''];
+    const rows = activeShops().filter(inMarket).map(s=>{
+      const allocations = ledger.leases.filter(l=>l.shop_id===s.id);
+      const currentLease = allocations.find(l=>includesMonth(l,current));
+      const nextLease = allocations.filter(l=>l.start_month>current).at(-1);
+      const allocation = s.is_blocked ? null : currentLease || nextLease;
+      const tenant = allocation ? tenantFor(allocation) : null;
+      const status = s.is_blocked ? 'स्वयं उपयोग (ब्लॉक)' : currentLease ? 'किराये पर' : nextLease ? 'आगे के लिए आवंटित' : 'खाली';
+      const tenantName = escape(tenant?.name || allocation?.tenant || '—');
+      const tenantDetails = tenant
+        ? '<a class="button action-details" href="#tenant/'+escape(tenant.id)+'/shops">'+tenantName+'</a>'
+        : tenantName;
+      const pay = allocation ? ' '+action('payment',allocation.id,'किराया जमा करें','pay') : '';
+      const remove = !s.is_blocked && !allocations.some(l=>!l.end_month || l.end_month>=current)
+        ? ' '+action('archive-shop',s.id,'दुकान हटाएँ') : '';
+      return [escape(marketOf(s)?.name || '—'),escape(shopNumber(s)),escape(s.address),status,tenantDetails,
+        action('shop',s.id,'संपादित करें')+remove+pay];
+    });
+    body = toolbar('दुकानें',marketPicker()+action('shop','','दुकान जोड़ें')) + table(headers,rows);
   } else if (route === 'tenants') {
     const receiptsByLease = new Map();
     for (const receipt of receiptRows()) {
@@ -441,6 +457,12 @@ function render(error = '') {
     tick();
     clock = setInterval(tick,1000);
     return;
+  }
+  if (route==='markets' || route==='shops') {
+    const tabs = [['markets','मार्केट'],['shops','दुकानें']].map(([target,label])=>
+      '<a class="button tenant-tab" href="#'+target+'"'+(route===target?' aria-current="page"':'')+'>'+label+'</a>'
+    ).join('');
+    body = '<nav class="tenant-tabs" aria-label="मार्केट और दुकानें">'+tabs+'</nav>'+body;
   }
   root.innerHTML = '<div class="toolbar"><a class="button" href="#dashboard">← डैशबोर्ड</a></div><section class="panel">'+body+'</section>';
   document.querySelectorAll('[data-tenant-tab]').forEach(button=>button.addEventListener('click',()=>{

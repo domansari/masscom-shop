@@ -145,12 +145,12 @@ label{display:grid;gap:6px;margin-bottom:12px}input,select{min-width:0}form{disp
   border-radius:10px 10px 6px 6px;background:#ffffff12;
   border-color:#ffffff38;color:#dbeafe;font-weight:600
 }
-.tenant-tab[aria-pressed="true"]{
+.tenant-tab:is([aria-pressed="true"],[aria-current="page"]){
   background:#2563eb;border-color:#93c5fd;color:#fff;
   box-shadow:0 4px 14px #2563eb55
 }
 .tenant-tab:hover{background:#ffffff26}
-.tenant-tab[aria-pressed="true"]:hover{background:#1d4ed8}
+.tenant-tab:is([aria-pressed="true"],[aria-current="page"]):hover{background:#1d4ed8}
 .tenant-tab:focus-visible{outline:2px solid #a5f3fc;outline-offset:2px}
 .tenant-tab-panel[hidden]{display:none}
 
