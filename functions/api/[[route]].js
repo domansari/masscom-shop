@@ -13,18 +13,53 @@ function send(body, status = 200, cookie) {
 async function digest(value) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
 }
-async function matches(input, secret) {
-  const [a,b] = await Promise.all([digest(input),digest(secret)]);
-  let difference = 0;
-  for (let i=0; i<a.length; i++) difference |= a[i] ^ b[i];
-  return difference === 0;
+const hex = bytes => Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');
+function randomHex(size) {
+  const bytes=new Uint8Array(size);
+  crypto.getRandomValues(bytes);
+  return hex(bytes);
+}
+async function passwordHash(password,saltHex) {
+  const salt=Uint8Array.from(saltHex.match(/.{2}/g)||[],part=>parseInt(part,16));
+  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:120000,hash:'SHA-256'},key,256);
+  return hex(new Uint8Array(bits));
+}
+function constantTimeTextEqual(a,b) {
+  if (typeof a!=='string' || typeof b!=='string') return false;
+  let difference=a.length^b.length;
+  for (let i=0;i<Math.max(a.length,b.length);i++) difference|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
+  return difference===0;
+}
+async function ensureAuthTables(db,initialPassword) {
+  await db.batch([
+    db.prepare('CREATE TABLE IF NOT EXISTS login_attempts (client TEXT PRIMARY KEY, expires INTEGER NOT NULL, attempts INTEGER NOT NULL)'),
+    db.prepare(`CREATE TABLE IF NOT EXISTS admin_credentials (
+      id INTEGER PRIMARY KEY CHECK(id=1), salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS admin_password_resets (
+      token_hash TEXT PRIMARY KEY, expires INTEGER NOT NULL, used_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS password_reset_requests (
+      client TEXT PRIMARY KEY, window_started INTEGER NOT NULL, attempts INTEGER NOT NULL
+    )`)
+  ]);
+  if (await db.prepare('SELECT id FROM admin_credentials WHERE id=1').first()) return;
+  if (typeof initialPassword!=='string' || initialPassword.length<8 || initialPassword.length>20) {
+    throw new Error('Cloudflare का ADMIN_PASSWORD secret सेट करें।');
+  }
+  const salt=randomHex(16);
+  const hash=await passwordHash(initialPassword,salt);
+  await db.prepare('INSERT OR IGNORE INTO admin_credentials (id,salt,password_hash) VALUES (1,?,?)').bind(salt,hash).run();
 }
 function text(value, max = 120) {
   return typeof value === 'string' ? value.trim().slice(0,max) : '';
 }
 const validAmount = amount => Number.isSafeInteger(amount) && amount > 0 && amount <= 10000000000;
 
-async function verifyPassword(db,request,password,secret) {
+async function verifyPassword(db,request,password) {
   if (typeof password !== 'string' || password.length < 8 || password.length > 20) {
     return send({error:'8 से 20 अक्षरों का पासवर्ड डालें।'},400);
   }
@@ -38,7 +73,9 @@ async function verifyPassword(db,request,password,secret) {
     WHERE expires<=? OR attempts<10
     RETURNING attempts`).bind(client,time+900000,time,time,time).first();
   if (!attempt) return send({error:'बहुत ज़्यादा कोशिशें हुई हैं। 15 मिनट बाद फिर कोशिश करें।'},429);
-  if (!await matches(password,secret)) {
+  const credential=await db.prepare('SELECT salt,password_hash FROM admin_credentials WHERE id=1').first();
+  const candidate=credential ? await passwordHash(password,credential.salt) : '';
+  if (!credential || !constantTimeTextEqual(candidate,credential.password_hash)) {
     return send({error:'पासवर्ड गलत है।'},401);
   }
   await db.prepare('DELETE FROM login_attempts WHERE client=? OR expires<=?').bind(client,time).run();
@@ -108,18 +145,86 @@ export async function onRequest({request,env}) {
   const route = url.pathname.slice(5);
   const method = request.method;
   const db = env.SHOP_DB;
-  if (!db || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 8 || env.ADMIN_PASSWORD.length > 20) return send({error:'Cloudflare का सेटअप अभी बाकी है।'},503);
+  if (!db) return send({error:'Cloudflare का D1 सेटअप अभी बाकी है।'},503);
   if (method !== 'GET' && (method !== 'POST' || request.headers.get('Origin') !== url.origin)) {
     return send({error:'यह अनुरोध स्वीकार नहीं किया गया।'},403);
   }
   try {
+    await ensureAuthTables(db,env.ADMIN_PASSWORD);
     let data = {};
     if (method === 'POST') {
       try { data = await request.json(); } catch { return send({error:'अनुरोध अमान्य है।'},400); }
       if (!data || typeof data !== 'object') return send({error:'Invalid request.'},400);
     }
+    if (method === 'POST' && route === 'forgot-password') {
+      const now=Date.now();
+      const client=request.headers.get('CF-Connecting-IP')||'unknown';
+      const allowed=await db.prepare(`INSERT INTO password_reset_requests (client,window_started,attempts)
+        VALUES (?,?,1) ON CONFLICT(client) DO UPDATE SET
+        attempts=CASE WHEN window_started<=? THEN 1 ELSE attempts+1 END,
+        window_started=CASE WHEN window_started<=? THEN excluded.window_started ELSE window_started END
+        WHERE window_started<=? OR attempts<3 RETURNING attempts`)
+        .bind(client,now,now-3600000,now-3600000,now-3600000).first();
+      if (!allowed) return send({error:'कई बार अनुरोध हुआ है। एक घंटे बाद फिर कोशिश करें।'},429);
+      const accountId=text(env.CF_ACCOUNT_ID,64);
+      const apiToken=env.CF_EMAIL_API_TOKEN;
+      const sender=text(env.ADMIN_EMAIL_FROM,160);
+      if (!/^[a-f0-9]{32}$/i.test(accountId) || typeof apiToken!=='string' || apiToken.length<20 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender)) {
+        return send({error:'पासवर्ड रीसेट ईमेल सेवा अभी सेटअप नहीं है।'},503);
+      }
+      const token=randomHex(32);
+      const tokenHash=hex(await digest(token));
+      let base;
+      try { base=new URL(env.APP_BASE_URL||'https://shop.masscom.co.in'); }
+      catch { return send({error:'पासवर्ड रीसेट लिंक सेटअप जाँचें।'},503); }
+      if (base.protocol!=='https:') return send({error:'पासवर्ड रीसेट लिंक सेटअप जाँचें।'},503);
+      const resetUrl=new URL('/#reset-password/'+token,base.origin).toString();
+      await db.batch([
+        db.prepare('DELETE FROM admin_password_resets'),
+        db.prepare('INSERT INTO admin_password_resets (token_hash,expires,created_at) VALUES (?,?,?)').bind(tokenHash,now+1800000,now)
+      ]);
+      try {
+        const response=await fetch('https://api.cloudflare.com/client/v4/accounts/'+accountId+'/email/sending/send',{
+          method:'POST',headers:{'Authorization':'Bearer '+apiToken,'Content-Type':'application/json'},
+          body:JSON.stringify({to:'info@masscom.co.in',from:sender,subject:'दुकान किराया प्रबंधन पासवर्ड रीसेट',
+            text:'आपके पासवर्ड रीसेट का अनुरोध मिला है। नया पासवर्ड सेट करने के लिए यह लिंक 30 मिनट के भीतर खोलें: '+resetUrl+'\n\nयदि आपने अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें।',
+            html:'<p>आपके पासवर्ड रीसेट का अनुरोध मिला है।</p><p><a href="'+resetUrl+'">नया पासवर्ड सेट करें</a></p><p>यह लिंक 30 मिनट बाद समाप्त हो जाएगा और एक ही बार इस्तेमाल किया जा सकता है। यदि आपने अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें।</p>'})
+        });
+        const result=await response.json().catch(()=>({}));
+        if (!response.ok || result.success!==true) throw new Error('Email service rejected the reset request.');
+      } catch (error) {
+        await db.prepare('DELETE FROM admin_password_resets WHERE token_hash=?').bind(tokenHash).run();
+        console.error('Password reset email failed',error.name);
+        return send({error:'रीसेट ईमेल भेजा नहीं जा सका। ईमेल सेवा सेटअप जाँचकर फिर कोशिश करें।'},502);
+      }
+      return send({ok:true});
+    }
+    if (method === 'POST' && route === 'reset-password') {
+      const token=typeof data.token==='string' && /^[a-f0-9]{64}$/.test(data.token) ? data.token : '';
+      const password=data.password;
+      if (typeof password!=='string' || password.length<8 || password.length>20) return send({error:'नया पासवर्ड 8 से 20 अक्षरों का रखें।'},400);
+      if (!token) return send({error:'यह रीसेट लिंक अमान्य या समाप्त हो गया है। नया लिंक मँगाएँ।'},400);
+      const tokenHash=hex(await digest(token));
+      const now=Date.now();
+      const valid=await db.prepare(`SELECT token_hash FROM admin_password_resets
+        WHERE token_hash=? AND expires>? AND used_at IS NULL AND attempts<5`).bind(tokenHash,now).first();
+      if (!valid) return send({error:'यह रीसेट लिंक अमान्य या समाप्त हो गया है। नया लिंक मँगाएँ।'},400);
+      const salt=randomHex(16);
+      const hash=await passwordHash(password,salt);
+      const [updated]=await db.batch([
+        db.prepare(`UPDATE admin_credentials SET salt=?,password_hash=?,updated_at=CURRENT_TIMESTAMP
+          WHERE id=1 AND EXISTS (SELECT 1 FROM admin_password_resets WHERE token_hash=? AND expires>? AND used_at IS NULL AND attempts<5)`)
+          .bind(salt,hash,tokenHash,now),
+        db.prepare(`UPDATE admin_password_resets SET used_at=?,attempts=attempts+1
+          WHERE token_hash=? AND expires>? AND used_at IS NULL AND attempts<5`).bind(now,tokenHash,now),
+        db.prepare('DELETE FROM sessions'),
+        db.prepare('DELETE FROM login_attempts')
+      ]);
+      if (!updated.meta.changes) return send({error:'यह रीसेट लिंक इस्तेमाल हो चुका है। नया लिंक मँगाएँ।'},400);
+      return send({ok:true});
+    }
     if (method === 'POST' && route === 'login') {
-      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      const failure = await verifyPassword(db,request,data.password);
       if (failure) return failure;
       const id = crypto.randomUUID();
       const now = Date.now();
@@ -175,7 +280,7 @@ export async function onRequest({request,env}) {
       return new Response(bytes,{headers:{'Content-Type':match[1],'Content-Disposition':'inline; filename="'+safeName+'"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
     }
     if (method === 'POST' && route === 'verify-admin') {
-      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      const failure = await verifyPassword(db,request,data.password);
       if (failure) return failure;
       return send({ok:true});
     }
@@ -431,7 +536,7 @@ export async function onRequest({request,env}) {
       return send({ok:true});
     }
     if (method === 'POST' && ['return-deposit','end-lease'].includes(route)) {
-      const failure = await verifyPassword(db,request,data.password,env.ADMIN_PASSWORD);
+      const failure = await verifyPassword(db,request,data.password);
       if (failure) return failure;
     }
     if (method === 'POST' && route === 'edit-deposit') {
@@ -566,6 +671,7 @@ export async function onRequest({request,env}) {
     }
     return send({error:'पेज नहीं मिला।'},404);
   } catch (error) {
+    if (String(error).includes('Cloudflare का ADMIN_PASSWORD secret सेट करें।')) return send({error:'Cloudflare में ADMIN_PASSWORD secret सेट करें।'},503);
     if (String(error).includes('UNIQUE constraint failed: shops.code')) return send({error:'यह दुकान नंबर पहले से दर्ज है।'},409);
     if (/UNIQUE constraint failed: payments\.receipt_number|payments_receipt_number_unique/.test(String(error))) {
       return send({error:'यह रसीद नंबर पहले से दर्ज है। दूसरा नंबर डालें।'},409);

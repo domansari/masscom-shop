@@ -44,6 +44,7 @@ const table = (headers,rows) => rows.length ? '<div class="table"><table><thead>
   rows.map(cells=>'<tr>'+cells.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>' :
   '<p>अभी कोई रिकॉर्ड नहीं है।</p>';
 let ledger, month, clock;
+let authNotice = '';
 let tenantTab = 'tenants';
 let tenantDueMonth = '';
 let tenantDueRows = [];
@@ -218,8 +219,29 @@ function render(error = '') {
   clearInterval(clock);
   logout.hidden = !ledger;
   if (!ledger) {
-    root.innerHTML = '<section class="login panel"><h1>प्रशासक लॉगिन</h1><form id="login"><label>पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">लॉगिन करें</button></form></section>';
-    document.querySelector('#login').addEventListener('submit',e=>submit(e,async d=>{await api('login',d);await load();}));
+    const authRoute=location.hash.slice(1);
+    if (authRoute==='forgot-password') {
+      root.innerHTML='<section class="login panel"><h1>पासवर्ड रीसेट</h1><p>रीसेट लिंक '+escape('info@masscom.co.in')+' पर भेजें।</p><form id="forgot-password-form"><p class="error" role="alert">'+escape(error)+'</p><p id="reset-email-status" role="status" aria-live="polite"></p><button class="primary">रीसेट लिंक भेजें</button><a class="button" href="#dashboard">लॉगिन पर वापस जाएँ</a></form></section>';
+      document.querySelector('#forgot-password-form').addEventListener('submit',event=>submit(event,async()=>{
+        await api('forgot-password',{});
+        document.querySelector('#reset-email-status').textContent='यदि ईमेल सेवा सेटअप है, तो रीसेट लिंक भेज दिया गया है। Inbox और Spam फ़ोल्डर देखें।';
+      }));
+      return;
+    }
+    if (authRoute.startsWith('reset-password/')) {
+      const token=authRoute.slice('reset-password/'.length);
+      root.innerHTML='<section class="login panel"><h1>नया पासवर्ड सेट करें</h1><form id="reset-password-form"><label>नया पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" autocomplete="new-password" required></label><label>पासवर्ड फिर लिखें<input type="password" name="confirm_password" minlength="8" maxlength="20" autocomplete="new-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">पासवर्ड बदलें</button></form></section>';
+      document.querySelector('#reset-password-form').addEventListener('submit',event=>submit(event,async({password,confirm_password})=>{
+        if(password!==confirm_password) throw new Error('दोनों पासवर्ड एक जैसे दर्ज करें।');
+        await api('reset-password',{token,password});
+        authNotice='पासवर्ड बदल गया है। नए पासवर्ड से लॉगिन करें।';
+        location.hash='dashboard';
+        await load();
+      }));
+      return;
+    }
+    root.innerHTML = '<section class="login panel"><h1>प्रशासक लॉगिन</h1><p role="status">'+escape(authNotice)+'</p><form id="login"><label>पासवर्ड<input type="password" name="password" minlength="8" maxlength="20" autocomplete="current-password" required></label><p class="error" role="alert">'+escape(error)+'</p><button class="primary">लॉगिन करें</button><a class="button" href="#forgot-password">पासवर्ड भूल गए?</a></form></section>';
+    document.querySelector('#login').addEventListener('submit',e=>submit(e,async d=>{await api('login',d);authNotice='';await load();}));
     return;
   }
   const route = location.hash.slice(1);
@@ -1074,5 +1096,5 @@ logout.onclick=async ()=>{
   location.hash='dashboard';
   render();
 };
-window.addEventListener('hashchange',()=>{if(ledger)render();});
+window.addEventListener('hashchange',()=>render());
 load();
